@@ -362,13 +362,16 @@ SaaS subscription billing must remain separate from invoices and payments issued
 | `security_event` | Security-related events | Relationship-Owned |
 | `platform_security_event` | Platform-wide security events | Platform-Owned |
 | `privileged_access_event` | Exceptional privileged access history | Platform-Owned |
+| `privileged_access_grant` | Explicit, approved and time-limited grants of privileged access to firm resources | Platform-Owned |
 
 ### 2.20 System and Background Processing Table Group
 
 | Proposed Table | Purpose | Ownership |
 |---|---|---|
 | `background_job_execution` | Background job execution metadata | System-Owned |
+| `background_job_attempt` | Individual execution attempts and retry history for background jobs | System-Owned |
 | `scheduled_job_execution` | Scheduled task execution history | System-Owned |
+| `scheduled_job_definition` | Configuration and lifecycle of recurring or scheduled jobs | System-Owned |
 | `webhook_event` | External webhook receipt and processing history | Relationship-Owned |
 | `integration_configuration` | External provider configuration | Firm-Owned |
 | `integration_delivery_log` | External integration delivery attempts | Firm-Owned |
@@ -9067,3 +9070,4870 @@ Proposed indexes:
 - The system must determine whether one-time plans are needed at launch.
 - The system must define plan upgrade, downgrade and renewal pricing behavior.
 - The system must ensure historical subscriptions retain their original commercial terms.
+
+### 3.66 `plan_feature`
+
+**Purpose**
+
+The `plan_feature` table defines the features, capabilities and usage entitlements associated with each SaaS subscription plan.
+
+It allows the platform to control which application features are available to firms under different subscription plans.
+
+Examples include:
+
+- Maximum number of firm staff members.
+- Maximum number of customers.
+- Maximum document storage.
+- Assessment-year availability.
+- Advanced reporting.
+- Excel import functionality.
+- Customer portal access.
+- Automated notifications.
+- Financial reporting.
+- API and integration access.
+
+Feature entitlements must be evaluated by the backend. Hiding a feature in the user interface must never be treated as an authorization control.
+
+**Ownership and Tenant Scope**
+
+- Ownership: Platform-Owned.
+- Tenant scope: Platform-level.
+- No `firm_id` column.
+- No firm-level RLS policy.
+- Access restricted to authorized platform administrators and backend services.
+- Firm administrators may view the entitlements applicable to their own subscription.
+
+**Proposed Columns**
+
+| Column | Data Type | Nullable | Description |
+|---|---|---|---|
+| `id` | UUID | No | Primary key |
+| `subscription_plan_id` | UUID | No | Associated subscription plan |
+| `feature_key` | VARCHAR(100) | No | Stable feature identifier |
+| `feature_name` | VARCHAR(150) | No | Human-readable feature name |
+| `feature_description` | TEXT | Yes | Description of the feature |
+| `is_included` | BOOLEAN | No | Whether the feature is included |
+| `limit_type` | VARCHAR(30) | No | Type of entitlement limit |
+| `limit_value` | NUMERIC(18,2) | Yes | Configured feature limit |
+| `limit_unit` | VARCHAR(30) | Yes | Unit associated with the limit |
+| `feature_configuration` | JSONB | No | Additional validated feature configuration |
+| `created_at` | TIMESTAMPTZ | No | Record creation timestamp |
+| `updated_at` | TIMESTAMPTZ | No | Last update timestamp |
+| `created_by_platform_user_id` | UUID | Yes | Platform administrator creating the record |
+| `updated_by_platform_user_id` | UUID | Yes | Platform administrator updating the record |
+
+**Primary Key and Foreign Keys**
+
+- Primary key: `id`.
+- `subscription_plan_id` references `subscription_plan.id`.
+- `created_by_platform_user_id` references `platform_user.id`.
+- `updated_by_platform_user_id` references `platform_user.id`.
+
+A feature key must identify a consistent application capability across all plans.
+
+**Limit Types**
+
+Initial supported values:
+
+- `none` — No numerical limit applies.
+- `unlimited` — The feature has no configured usage ceiling.
+- `fixed` — A specific numerical limit applies.
+- `boolean` — The feature is either included or excluded.
+- `configurable` — The feature uses a validated configuration rather than a single numerical limit.
+
+**Examples of Feature Entitlements**
+
+| Feature Key | Example Entitlement | Example Limit |
+|---|---|---|
+| `staff_users` | Maximum firm staff accounts | 5 |
+| `customers` | Maximum managed customers | 500 |
+| `document_storage` | Document storage capacity | 50 GB |
+| `assessment_years` | Enabled assessment years | 3 |
+| `excel_import` | Excel import functionality | Included |
+| `advanced_reporting` | Advanced reports | Included |
+| `customer_portal` | Customer portal | Included |
+| `api_access` | API access | Excluded |
+| `automated_notifications` | Automated notifications | 1,000 per month |
+
+These are illustrative values only. Actual commercial limits must be configured through approved platform administration.
+
+**Constraints and Data Integrity**
+
+- Each feature must belong to an existing subscription plan.
+- Feature key must not be empty.
+- Feature name must not be empty.
+- Feature key must be unique within a subscription plan.
+- `limit_value` must not be negative when supplied.
+- Limit type must use an approved value.
+- Fixed limits must have a valid limit value and unit where applicable.
+- Boolean entitlements must use the inclusion flag consistently.
+- Unlimited entitlements must not be interpreted as zero.
+- Feature configuration must contain a valid JSON object.
+- Feature configuration must be validated against the approved feature schema.
+- Creator and updater references must point to valid platform administrators.
+
+**Indexes**
+
+Proposed indexes:
+
+- Unique index on `(subscription_plan_id, feature_key)`.
+- Index on `(feature_key, is_included)`.
+- Index on `(subscription_plan_id, is_included)`.
+
+**Business and Security Rules**
+
+- Only authorized platform administrators may define or modify plan entitlements.
+- Firms must not modify their own plan feature definitions.
+- Backend authorization must verify feature availability before executing restricted operations.
+- Usage limits must be enforced by backend services, not only by the frontend.
+- A disabled feature must remain unavailable even if a client attempts to invoke its API directly.
+- A global platform feature flag may disable a feature even when the subscription includes it.
+- A subscription entitlement must not override platform security restrictions or role-based permissions.
+- Usage calculations must use consistent definitions and avoid counting the same operation multiple times.
+- Changes to published plan entitlements must preserve historical subscription agreements through versioning or subscription snapshots.
+- All entitlement changes must be audited.
+
+**Data Integrity and Lifecycle**
+
+- Feature definitions must use stable feature keys.
+- Removing a feature from a new plan version must not erase historical entitlement information.
+- Plan entitlement changes must follow controlled publication procedures.
+- Usage limits must be reconciled with actual usage records.
+- Entitlement evaluation must be deterministic and consistent across backend services.
+- Cached entitlement changes must trigger appropriate cache invalidation.
+- Archived subscription plans must retain their historical feature definitions.
+
+**Design Notes and Open Decisions**
+
+- The system must define the complete feature catalogue and stable feature keys.
+- The system must determine whether feature definitions should be separated into a global `feature_catalogue` table.
+- The system must define usage measurement and reset periods for each limited feature.
+- The system must decide how storage limits, customer limits and staff limits are calculated.
+- The system must define whether usage limits are hard restrictions or configurable warning thresholds.
+- The system must determine how plan upgrades and downgrades affect existing usage.
+- The system must define the precedence between platform feature flags, subscription entitlements and firm-specific configuration.
+- The system must determine whether published entitlements require a separate version history table.
+- The system must ensure that historical subscriptions retain their agreed entitlement terms.
+
+### 3.67 `firm_subscription`
+
+**Purpose**
+
+The `firm_subscription` table manages the subscription relationship between a CA firm and the ITR Management System SaaS platform.
+
+It records the subscription plan selected by a firm, its commercial terms, billing period, activation status and subscription lifecycle.
+
+A firm may have multiple historical subscription records, but only the permitted number of simultaneously active subscriptions may be maintained according to platform policy.
+
+The table must preserve historical subscription terms when a firm upgrades, downgrades, renews or changes plans.
+
+**Ownership and Tenant Scope**
+
+- Ownership: Firm-Owned, managed through platform subscription administration.
+- Tenant scope: Firm-scoped.
+- Tenant identifier: `firm_id`.
+- Mandatory PostgreSQL Row-Level Security (RLS).
+- Each subscription belongs to one CA firm.
+- Platform administrators may perform authorized subscription management operations.
+- Firm administrators may view their own subscription information but must not modify platform-controlled billing status or commercial terms.
+
+**Proposed Columns**
+
+| Column | Data Type | Nullable | Description |
+|---|---|---|---|
+| `id` | UUID | No | Primary key |
+| `firm_id` | UUID | No | Subscribing CA firm |
+| `subscription_plan_id` | UUID | No | Selected subscription plan |
+| `subscription_reference` | VARCHAR(100) | No | Unique subscription reference |
+| `subscription_status` | VARCHAR(30) | No | Current subscription lifecycle status |
+| `billing_interval` | VARCHAR(20) | No | Agreed billing frequency |
+| `billing_interval_count` | INTEGER | No | Number of billing intervals |
+| `agreed_price` | NUMERIC(18,2) | No | Agreed subscription price |
+| `currency_code` | CHAR(3) | No | ISO currency code |
+| `trial_started_at` | TIMESTAMPTZ | Yes | Trial start timestamp |
+| `trial_ends_at` | TIMESTAMPTZ | Yes | Trial end timestamp |
+| `subscription_started_at` | TIMESTAMPTZ | Yes | Subscription activation timestamp |
+| `current_period_start` | TIMESTAMPTZ | Yes | Current billing period start |
+| `current_period_end` | TIMESTAMPTZ | Yes | Current billing period end |
+| `next_billing_at` | TIMESTAMPTZ | Yes | Next scheduled billing timestamp |
+| `cancel_at_period_end` | BOOLEAN | No | Whether cancellation is scheduled at period end |
+| `cancelled_at` | TIMESTAMPTZ | Yes | Cancellation timestamp |
+| `cancellation_reason` | TEXT | Yes | Reason for cancellation |
+| `ended_at` | TIMESTAMPTZ | Yes | Subscription end timestamp |
+| `previous_subscription_id` | UUID | Yes | Previous subscription when replaced |
+| `created_at` | TIMESTAMPTZ | No | Record creation timestamp |
+| `updated_at` | TIMESTAMPTZ | No | Last update timestamp |
+| `created_by_platform_user_id` | UUID | Yes | Platform administrator creating the subscription |
+| `updated_by_platform_user_id` | UUID | Yes | Platform administrator updating the subscription |
+
+**Primary Key and Foreign Keys**
+
+- Primary key: `id`.
+- `firm_id` references `firm.id`.
+- `subscription_plan_id` references `subscription_plan.id`.
+- `previous_subscription_id` references `firm_subscription.id`.
+- `created_by_platform_user_id` references `platform_user.id`.
+- `updated_by_platform_user_id` references `platform_user.id`.
+
+Subscription replacement and plan-change relationships must preserve the original subscription history.
+
+**Subscription Statuses**
+
+Initial supported values:
+
+- `pending`
+- `trialing`
+- `active`
+- `past_due`
+- `suspended`
+- `cancelled`
+- `expired`
+- `terminated`
+
+**Billing Intervals**
+
+Initial supported values:
+
+- `monthly`
+- `quarterly`
+- `half_yearly`
+- `yearly`
+- `one_time`
+
+The agreed interval and price must be preserved even if the underlying subscription plan changes later.
+
+**Constraints and Data Integrity**
+
+- Subscription reference must not be empty.
+- Subscription reference must be unique within the firm.
+- Agreed price must be zero or greater.
+- Billing interval count must be positive.
+- Currency must use a supported ISO currency code.
+- Current billing period end must be later than its start when both are supplied.
+- Trial end must be later than trial start when both are supplied.
+- Cancellation timestamps and end timestamps must be consistent with the subscription lifecycle.
+- A previous subscription reference must not point to the same record.
+- A firm must not have overlapping active subscriptions unless explicitly permitted by platform policy.
+- Subscription changes must not overwrite historical commercial terms.
+
+**Indexes**
+
+Proposed indexes:
+
+- Unique index on `(firm_id, subscription_reference)`.
+- Index on `(firm_id, subscription_status)`.
+- Index on `(subscription_plan_id, subscription_status)`.
+- Index on `(subscription_status, current_period_end)`.
+- Index on `(subscription_status, next_billing_at)`.
+- Index on `(firm_id, created_at DESC)`.
+- Index on `previous_subscription_id`.
+
+A suitable partial unique index or controlled subscription lifecycle mechanism must enforce the permitted number of current subscriptions per firm.
+
+**Tenant Isolation and RLS**
+
+- Every subscription must contain `firm_id`.
+- RLS must restrict firm access to the current tenant.
+- Composite foreign keys must enforce firm-scoped relationships.
+- Platform subscription operations must use separately authorized administrative access.
+- Firm administrators may view their subscription details through authorized backend services.
+- Firm users must not be able to alter subscription status, agreed price or platform-controlled entitlements.
+- Platform administration must not automatically grant unrestricted access to firm customer tax information.
+
+**Business and Security Rules**
+
+- Subscription creation and activation must be performed through authorized platform workflows.
+- Subscription activation must follow the approved payment, trial or manual activation process.
+- Plan changes must preserve the previous subscription's history and commercial terms.
+- Upgrades and downgrades must follow explicitly defined effective-date and proration policies.
+- Subscription cancellation must follow the agreed cancellation policy.
+- Scheduled cancellation must not immediately disable access before the applicable period ends.
+- Expiry and suspension must trigger the appropriate entitlement and access-control updates.
+- Subscription status must not be treated as a substitute for firm account security status.
+- All subscription lifecycle operations must be auditable.
+- Subscription entitlements must be evaluated by backend services using the applicable plan and agreed subscription terms.
+
+**Data Integrity and Lifecycle**
+
+- Subscription creation and activation must be transactional.
+- Subscription renewal must preserve billing-period history.
+- Subscription replacement must maintain a traceable relationship to the previous subscription.
+- A cancelled or expired subscription must not be silently reactivated without an authorized lifecycle operation.
+- Historical subscriptions must remain available for financial reporting and audit.
+- Subscription termination must not delete firm data.
+- Data retention and export must follow the platform's contractual and legal policies.
+- All timestamps must use UTC.
+- All monetary values must use exact decimal arithmetic.
+
+**Design Notes and Open Decisions**
+
+- The system must define whether one firm may maintain multiple simultaneous subscriptions.
+- The system must finalize trial eligibility and trial extension rules.
+- The system must determine whether renewals update the same subscription record or create separate subscription-period records.
+- The system must define upgrade and downgrade proration.
+- The system must determine whether subscriptions are activated manually or through a payment gateway at launch.
+- The system must define payment failure, grace period and suspension rules.
+- The system must determine how historical plan pricing and feature entitlements are snapshotted.
+- The system must define cancellation and reactivation policies.
+- The system must determine how subscription lifecycle events are synchronized with `subscription_history` and `subscription_event`.
+- The system must define how firm closure and subscription termination interact.
+
+### 3.68 `subscription_payment`
+
+**Purpose**
+
+The `subscription_payment` table records payments made by CA firms to the ITR Management System SaaS platform for subscription charges.
+
+It supports manual payment recording initially and can later support authorized payment gateway integrations.
+
+This table represents platform revenue collection from CA firms. It must remain separate from `customer_payment`, which records payments made by tax customers to their respective CA firms.
+
+**Ownership and Tenant Scope**
+
+- Ownership: Platform-Owned, with a firm relationship.
+- Tenant scope: Firm-associated, platform-controlled.
+- `firm_id` identifies the subscribing firm.
+- Access is restricted to authorized platform billing administrators and backend services.
+- A firm administrator may view only their own subscription payment information.
+- Firm users must not create, approve or modify platform subscription payment records.
+
+**Proposed Columns**
+
+| Column | Data Type | Nullable | Description |
+|---|---|---|---|
+| `id` | UUID | No | Primary key |
+| `firm_id` | UUID | No | Subscribing CA firm |
+| `firm_subscription_id` | UUID | No | Related subscription |
+| `payment_reference` | VARCHAR(100) | No | Unique platform payment reference |
+| `payment_amount` | NUMERIC(18,2) | No | Amount received |
+| `currency_code` | CHAR(3) | No | ISO currency code |
+| `payment_method` | VARCHAR(40) | No | Payment method |
+| `payment_status` | VARCHAR(30) | No | Payment lifecycle status |
+| `payment_date` | DATE | Yes | Business date of payment |
+| `received_at` | TIMESTAMPTZ | Yes | Timestamp payment was received |
+| `provider_name` | VARCHAR(100) | Yes | Payment gateway or provider |
+| `provider_transaction_reference` | VARCHAR(255) | Yes | External transaction reference |
+| `provider_order_reference` | VARCHAR(255) | Yes | External order reference |
+| `billing_period_start` | TIMESTAMPTZ | Yes | Period covered by payment |
+| `billing_period_end` | TIMESTAMPTZ | Yes | End of covered billing period |
+| `invoice_reference` | VARCHAR(100) | Yes | Related platform invoice reference |
+| `description` | TEXT | Yes | Payment description |
+| `failure_reason` | TEXT | Yes | Failure details when applicable |
+| `reversed_at` | TIMESTAMPTZ | Yes | Payment reversal timestamp |
+| `created_at` | TIMESTAMPTZ | No | Record creation timestamp |
+| `updated_at` | TIMESTAMPTZ | No | Last update timestamp |
+| `recorded_by_platform_user_id` | UUID | Yes | Platform administrator recording payment |
+
+**Primary Key and Foreign Keys**
+
+- Primary key: `id`.
+- `(firm_id, firm_subscription_id)` references the corresponding firm subscription using a same-firm composite foreign key.
+- `recorded_by_platform_user_id` references `platform_user.id`.
+
+Provider transaction references must follow an approved uniqueness and idempotency policy.
+
+**Payment Methods**
+
+Initial supported values:
+
+- `bank_transfer`
+- `upi`
+- `credit_card`
+- `debit_card`
+- `payment_gateway`
+- `cheque`
+- `other`
+
+**Payment Statuses**
+
+Initial supported values:
+
+- `pending`
+- `received`
+- `failed`
+- `partially_reversed`
+- `reversed`
+
+**Constraints and Data Integrity**
+
+- Payment reference must not be empty.
+- Payment reference must be unique within the platform or the applicable firm scope, as finalized in the schema.
+- Payment amount must be greater than zero.
+- Currency must use a supported ISO currency code.
+- Payment method and status must use approved values.
+- Received payments must have a received timestamp.
+- Reversed payments must preserve reversal evidence.
+- Billing period end must be later than its start when both are provided.
+- Subscription and firm identifiers must match.
+- Duplicate provider payment events must not create duplicate payment records.
+- Provider transaction identifiers must be validated within their provider-specific scope.
+
+**Indexes**
+
+Proposed indexes:
+
+- Unique index on `payment_reference`.
+- Index on `(firm_id, firm_subscription_id, payment_status)`.
+- Index on `(firm_id, payment_date DESC)`.
+- Index on `(payment_status, created_at DESC)`.
+- Index on `(provider_name, provider_transaction_reference)`.
+- Index on `(firm_id, billing_period_start, billing_period_end)`.
+- Index on `recorded_by_platform_user_id`.
+
+**Tenant Isolation and RLS**
+
+- Every payment must contain `firm_id`.
+- Platform-level access must be restricted to authorized billing administrators and backend services.
+- Firm administrators may retrieve only payments belonging to their own firm.
+- Firm-scoped retrieval must validate `firm_id` against the authenticated firm context.
+- Composite foreign keys must ensure that the payment and subscription belong to the same firm.
+- Platform billing permissions must be separate from firm-level financial permissions.
+- Platform administrators must not automatically receive unrestricted access to firm customer financial records.
+
+**Business and Security Rules**
+
+- Payments must be recorded only through authorized billing workflows.
+- Manual payment confirmation must require appropriate platform authorization and supporting evidence.
+- Payment gateway callbacks must be authenticated and verified.
+- Payment processing must be idempotent.
+- Provider acceptance of a payment request must not automatically mean that payment has been received.
+- Only confirmed payments may satisfy subscription payment obligations.
+- Failed payments must not activate or renew a subscription.
+- Payment reversals must preserve the original payment record.
+- Subscription payment records must not store card numbers, CVV values, banking passwords or payment credentials.
+- Provider transaction references must be protected from unauthorized disclosure.
+- All payment creation, confirmation, failure and reversal operations must be auditable.
+
+**Data Integrity and Lifecycle**
+
+- Payment records must preserve the original payment evidence.
+- Payment confirmation and corresponding subscription billing updates must be transactionally consistent.
+- Duplicate payment callbacks must not create duplicate financial effects.
+- Reversals must be recorded without deleting the original payment.
+- Partial reversals must preserve the original amount and record the reversed amount through an appropriate reversal model.
+- Failed and pending payments must remain distinguishable from received payments.
+- Historical subscription payments must remain available for platform financial reporting and reconciliation.
+- All monetary values must use exact decimal arithmetic.
+- All timestamps must use UTC; payment dates must use business dates.
+
+**Design Notes and Open Decisions**
+
+- The system must define whether platform subscription payments are always associated with a platform-generated invoice.
+- The system must determine whether one payment may cover multiple subscription periods or invoices.
+- The system must define the payment gateway and integration model.
+- The system must decide whether payment attempts require a separate history table.
+- The system must define partial payment and partial reversal handling.
+- The system must establish provider transaction idempotency and uniqueness rules.
+- The system must determine whether a separate platform refund table is required for subscription payment refunds.
+- The system must define payment reconciliation and receipt requirements.
+- The system must decide whether manual bank-transfer confirmation is the initial payment method.
+- The system must define the relationship between payment confirmation and subscription activation or renewal.
+
+### 3.69 `subscription_history`
+
+**Purpose**
+
+The `subscription_history` table records the historical lifecycle changes and important modifications made to a firm's SaaS subscription.
+
+It provides an auditable timeline of subscription events, including:
+
+- Subscription creation and activation.
+- Trial commencement and completion.
+- Plan upgrades and downgrades.
+- Pricing and billing interval changes.
+- Subscription renewal.
+- Payment-related suspension.
+- Cancellation and expiry.
+- Reactivation and termination.
+
+The table preserves historical subscription information and must not replace the current subscription state stored in `firm_subscription`.
+
+**Ownership and Tenant Scope**
+
+- Ownership: Platform-Owned, with a firm relationship.
+- Tenant scope: Firm-associated, platform-controlled.
+- `firm_id` identifies the affected firm.
+- Access is restricted to authorized platform billing administrators and backend services.
+- Firm administrators may view subscription history belonging to their own firm.
+- Firm users must not modify or delete subscription history.
+
+**Proposed Columns**
+
+| Column | Data Type | Nullable | Description |
+|---|---|---|---|
+| `id` | UUID | No | Primary key |
+| `firm_id` | UUID | No | Affected firm |
+| `firm_subscription_id` | UUID | No | Related subscription |
+| `event_type` | VARCHAR(60) | No | Subscription event category |
+| `previous_status` | VARCHAR(30) | Yes | Status before the event |
+| `new_status` | VARCHAR(30) | Yes | Status after the event |
+| `previous_plan_id` | UUID | Yes | Previous subscription plan |
+| `new_plan_id` | UUID | Yes | New subscription plan |
+| `previous_price` | NUMERIC(18,2) | Yes | Previous agreed price |
+| `new_price` | NUMERIC(18,2) | Yes | New agreed price |
+| `currency_code` | CHAR(3) | Yes | Currency for recorded price values |
+| `previous_billing_interval` | VARCHAR(20) | Yes | Previous billing frequency |
+| `new_billing_interval` | VARCHAR(20) | Yes | New billing frequency |
+| `change_reason` | TEXT | Yes | Reason for the subscription change |
+| `event_data` | JSONB | No | Additional validated event metadata |
+| `changed_by_platform_user_id` | UUID | Yes | Platform administrator responsible |
+| `change_source` | VARCHAR(40) | No | Origin of the event |
+| `correlation_id` | UUID | Yes | Identifier linking related operations |
+| `occurred_at` | TIMESTAMPTZ | No | Time the subscription event occurred |
+| `created_at` | TIMESTAMPTZ | No | Record creation timestamp |
+
+**Primary Key and Foreign Keys**
+
+- Primary key: `id`.
+- `(firm_id, firm_subscription_id)` references `firm_subscription` using a same-firm composite foreign key.
+- `previous_plan_id` references `subscription_plan.id` when supplied.
+- `new_plan_id` references `subscription_plan.id` when supplied.
+- `changed_by_platform_user_id` references `platform_user.id` when supplied.
+
+System-generated events may have no platform administrator reference.
+
+**Event Types**
+
+Initial supported values:
+
+- `subscription_created`
+- `subscription_activated`
+- `trial_started`
+- `trial_ended`
+- `plan_upgraded`
+- `plan_downgraded`
+- `pricing_changed`
+- `billing_interval_changed`
+- `subscription_renewed`
+- `payment_failed`
+- `subscription_suspended`
+- `subscription_reactivated`
+- `cancellation_scheduled`
+- `subscription_cancelled`
+- `subscription_expired`
+- `subscription_terminated`
+- `other`
+
+**Change Sources**
+
+Initial supported values:
+
+- `platform_admin`
+- `system`
+- `payment_gateway`
+- `automated_process`
+- `authorized_integration`
+
+**Constraints and Data Integrity**
+
+- Event type must not be empty.
+- Event type and change source must use approved values.
+- Previous and new status values must use the approved subscription status catalogue when supplied.
+- Previous and new prices must not be negative.
+- Event data must contain a valid JSON object.
+- Plan references must point to valid subscription plans.
+- The subscription and firm identifiers must match.
+- Every event must have an occurrence timestamp.
+- Changes that affect subscription status, plan or pricing must preserve sufficient previous and new values for audit.
+- System-generated events must identify their source clearly.
+- Historical events must not be silently modified or deleted.
+
+**Indexes**
+
+Proposed indexes:
+
+- Index on `(firm_id, firm_subscription_id, occurred_at DESC)`.
+- Index on `(firm_id, event_type, occurred_at DESC)`.
+- Index on `(firm_id, changed_by_platform_user_id, occurred_at DESC)`.
+- Index on `(firm_id, change_source, occurred_at DESC)`.
+- Index on `(firm_id, correlation_id)`.
+- Index on `(occurred_at)` for platform-wide historical reporting.
+
+**Tenant Isolation and RLS**
+
+- Every history record must contain `firm_id`.
+- Firm-facing queries must be restricted to the authenticated firm's subscription.
+- Composite foreign keys must enforce same-firm subscription relationships.
+- Platform billing administrators must use separately authorized platform access.
+- Firm administrators may view their own subscription history through approved backend services.
+- Firm users must not create, modify or delete subscription history.
+- Platform access must not automatically grant access to unrelated firm tax or customer records.
+
+**Business and Security Rules**
+
+- Subscription lifecycle changes must generate corresponding history records.
+- History generation must occur in the same transaction as the corresponding subscription state change wherever possible.
+- Previous and new values must accurately represent the state transition.
+- Manual administrative changes must identify the responsible platform administrator.
+- Automated changes must identify the system or integration source.
+- Payment gateway events must be verified before generating subscription history.
+- History records must not contain payment credentials, secrets or unnecessary customer tax information.
+- Historical subscription records must remain available for authorized billing disputes and audit.
+- All subscription changes must be traceable through correlation identifiers where applicable.
+
+**Data Integrity and Lifecycle**
+
+- History records should be append-only.
+- Subscription updates and their history records must be transactionally consistent.
+- Failed subscription changes must not create misleading successful history events.
+- Corrections must be represented by additional events rather than overwriting historical records.
+- Historical pricing must preserve the currency and billing context applicable at the time.
+- Retention and archival must follow platform financial and audit policies.
+- All timestamps must use UTC.
+- The latest valid subscription state must remain consistent with `firm_subscription`.
+
+**Design Notes and Open Decisions**
+
+- The system must decide whether subscription history stores every lifecycle event or only material changes.
+- The system must define the event catalogue and status transition rules.
+- The system must determine whether a dedicated immutable event identifier or idempotency key is required.
+- The system must define how failed and retried subscription operations are represented.
+- The system must decide whether complete plan entitlement snapshots are required for historical subscriptions.
+- The system must define how subscription history relates to `subscription_event`.
+- The system must determine whether provider callback payload references are retained.
+- The system must define retention, archival and tamper-resistance requirements for subscription history.
+
+### 3.70 `subscription_usage`
+
+**Purpose**
+
+The `subscription_usage` table records the consumption of subscription-based features and resource limits by each CA firm.
+
+It supports entitlement enforcement, usage dashboards, subscription limit monitoring and billing-related reporting.
+
+Examples include:
+
+- Number of active customer relationships.
+- Number of active firm staff accounts.
+- Document storage consumption.
+- Monthly notification usage.
+- Assessment-year usage.
+- API request consumption.
+- Other subscription-controlled resources.
+
+Usage records must be measurable, traceable and consistent with the entitlement definitions in `plan_feature`.
+
+This table must not independently grant permissions or modify subscription entitlements.
+
+**Ownership and Tenant Scope**
+
+- Ownership: Firm-Owned, with platform-controlled entitlement management.
+- Tenant scope: Firm-scoped.
+- Tenant identifier: `firm_id`.
+- Mandatory PostgreSQL Row-Level Security (RLS).
+- Each usage record belongs to one firm.
+- Platform billing and entitlement services may access usage through separately authorized backend operations.
+- Firm administrators may view usage applicable to their own firm.
+
+**Proposed Columns**
+
+| Column | Data Type | Nullable | Description |
+|---|---|---|---|
+| `id` | UUID | No | Primary key |
+| `firm_id` | UUID | No | Owning firm |
+| `firm_subscription_id` | UUID | No | Related subscription |
+| `feature_key` | VARCHAR(100) | No | Feature or resource being measured |
+| `usage_period_start` | TIMESTAMPTZ | No | Start of measurement period |
+| `usage_period_end` | TIMESTAMPTZ | No | End of measurement period |
+| `usage_quantity` | NUMERIC(20,4) | No | Measured resource consumption |
+| `usage_unit` | VARCHAR(30) | No | Unit of measurement |
+| `usage_limit` | NUMERIC(20,4) | Yes | Applicable entitlement limit |
+| `usage_status` | VARCHAR(30) | No | Usage monitoring status |
+| `last_calculated_at` | TIMESTAMPTZ | No | Most recent calculation timestamp |
+| `calculation_version` | VARCHAR(50) | Yes | Version of the usage calculation logic |
+| `usage_metadata` | JSONB | No | Additional validated usage information |
+| `created_at` | TIMESTAMPTZ | No | Record creation timestamp |
+| `updated_at` | TIMESTAMPTZ | No | Last update timestamp |
+
+**Primary Key and Foreign Keys**
+
+- Primary key: `id`.
+- `(firm_id, firm_subscription_id)` references `firm_subscription` using a same-firm composite foreign key.
+
+The feature key must correspond to an approved feature entitlement.
+
+The applicable usage limit must be determined using the subscription terms effective during the measurement period, rather than assuming that the firm's current plan was active throughout the entire period.
+
+**Usage Units**
+
+Initial supported examples:
+
+- `count`
+- `bytes`
+- `kilobytes`
+- `megabytes`
+- `gigabytes`
+- `requests`
+- `messages`
+- `minutes`
+- `other`
+
+Each feature must have a consistent measurement unit.
+
+**Usage Statuses**
+
+Initial supported values:
+
+- `within_limit`
+- `approaching_limit`
+- `limit_reached`
+- `exceeded`
+- `unlimited`
+- `not_applicable`
+
+**Constraints and Data Integrity**
+
+- Feature key must not be empty.
+- Usage quantity must not be negative.
+- Usage limit must not be negative when supplied.
+- Usage period end must be later than its start.
+- Usage unit must use an approved value.
+- Usage status must use an approved value.
+- Usage metadata must contain a valid JSON object.
+- Subscription and firm identifiers must match.
+- Usage calculations must use consistent definitions and units.
+- Duplicate period summaries must be prevented using an appropriate unique constraint based on firm, subscription, feature and measurement period.
+
+**Indexes**
+
+Proposed indexes:
+
+- Unique index on `(firm_id, firm_subscription_id, feature_key, usage_period_start, usage_period_end)`.
+- Index on `(firm_id, feature_key, usage_period_start DESC)`.
+- Index on `(firm_id, usage_status)`.
+- Index on `(firm_id, last_calculated_at)`.
+- Index on `(firm_subscription_id, feature_key)`.
+
+**Tenant Isolation and RLS**
+
+- Every usage record must contain `firm_id`.
+- RLS must restrict firm access to the current tenant.
+- Composite foreign keys must enforce same-firm subscription relationships.
+- Backend entitlement services must control usage calculation and updates.
+- Firm administrators may retrieve their own usage information through authorized APIs.
+- Firm users must not be able to modify usage quantities or entitlement limits directly.
+- Platform administration must use separately authorized access.
+
+**Business and Security Rules**
+
+- Usage must be calculated using approved and documented measurement rules.
+- Usage calculations must be repeatable and idempotent.
+- Usage limits must be enforced by backend services.
+- Frontend indicators must not be treated as enforcement controls.
+- Resource consumption must be attributed to the correct firm.
+- Duplicate events must not inflate usage.
+- Deleted, archived or reversed records must follow defined usage adjustment rules.
+- Usage changes must be traceable to their source events where necessary.
+- Approaching or exceeded limits may trigger notifications according to platform policy.
+- Unlimited entitlements must not be represented as an ordinary zero usage limit.
+- Usage reporting must not expose another firm's consumption data.
+
+**Data Integrity and Lifecycle**
+
+- Usage summaries must be recalculated or reconciled against authoritative source records.
+- Period boundaries must be consistent with the subscription billing and entitlement rules.
+- Usage records must preserve the measurement period and calculation version.
+- Usage changes resulting from corrections must be traceable.
+- Current usage must be consistent with the underlying resource consumption.
+- Historical usage must remain available for subscription disputes and reporting.
+- Usage aggregation must account for concurrent operations and prevent double counting.
+- All timestamps must use UTC.
+- Resource quantities must use appropriate precision and units.
+
+**Design Notes and Open Decisions**
+
+- The system must decide whether usage is stored as periodic summaries, individual usage events or both.
+- A separate immutable `subscription_usage_event` table may be required for reliable event-level accounting.
+- The system must define whether usage periods follow calendar months or subscription billing periods.
+- The system must define exact measurement rules for customers, staff, storage and notifications.
+- The system must determine how deleted documents and inactive customers affect usage.
+- The system must define hard-limit enforcement versus warning thresholds.
+- The system must decide how plan upgrades and downgrades affect usage limits during an existing period.
+- The system must define usage correction and reconciliation procedures.
+- The system must determine how usage is handled during trials, suspension and expired subscriptions.
+- The system must define retention and archival requirements for historical usage.
+
+### 3.71 `subscription_event`
+
+**Purpose**
+
+The `subscription_event` table records subscription-related business and integration events generated by the ITR Management System SaaS platform.
+
+It provides a durable event record for subscription lifecycle processing, payment integration, background jobs, notifications and entitlement updates.
+
+Examples include:
+
+- Subscription created or activated.
+- Trial started or ended.
+- Payment received or failed.
+- Subscription renewed.
+- Plan upgraded or downgraded.
+- Subscription suspended or reactivated.
+- Cancellation scheduled or completed.
+- Payment gateway callback received.
+- Subscription entitlement recalculated.
+
+This table supports reliable event processing and idempotency. It must not replace the authoritative subscription, payment or subscription-history records.
+
+**Ownership and Tenant Scope**
+
+- Ownership: Platform-Owned, with a firm relationship.
+- Tenant scope: Firm-associated, platform-controlled.
+- `firm_id` identifies the affected firm.
+- Access is restricted to authorized platform services and administrators.
+- Firm administrators may see only approved subscription event information for their own firm.
+- Firm users must not create, modify or delete platform subscription events.
+
+**Proposed Columns**
+
+| Column | Data Type | Nullable | Description |
+|---|---|---|---|
+| `id` | UUID | No | Primary key |
+| `firm_id` | UUID | Yes | Affected firm, where applicable |
+| `firm_subscription_id` | UUID | Yes | Related subscription, where applicable |
+| `event_type` | VARCHAR(100) | No | Event category |
+| `event_source` | VARCHAR(50) | No | Origin of the event |
+| `event_status` | VARCHAR(30) | No | Processing status |
+| `event_reference` | VARCHAR(150) | No | Internal event reference |
+| `external_event_id` | VARCHAR(255) | Yes | External provider event identifier |
+| `idempotency_key` | VARCHAR(255) | Yes | Duplicate-processing prevention key |
+| `event_payload` | JSONB | No | Validated event metadata |
+| `correlation_id` | UUID | Yes | Identifier linking related operations |
+| `occurred_at` | TIMESTAMPTZ | No | Time the event occurred |
+| `received_at` | TIMESTAMPTZ | No | Time the platform received the event |
+| `processed_at` | TIMESTAMPTZ | Yes | Successful processing timestamp |
+| `processing_attempts` | INTEGER | No | Number of processing attempts |
+| `last_error_code` | VARCHAR(100) | Yes | Last processing error code |
+| `last_error_message` | TEXT | Yes | Sanitized error description |
+| `created_at` | TIMESTAMPTZ | No | Record creation timestamp |
+| `updated_at` | TIMESTAMPTZ | No | Last update timestamp |
+
+**Primary Key and Foreign Keys**
+
+- Primary key: `id`.
+- `firm_id` references `firm.id` when supplied.
+- `(firm_id, firm_subscription_id)` references `firm_subscription` when both are supplied.
+
+Platform-wide events may not belong to a specific firm or subscription.
+
+When a subscription is specified, the firm identifier must match the subscription's firm.
+
+**Event Types**
+
+Initial supported values:
+
+- `subscription_created`
+- `subscription_activated`
+- `trial_started`
+- `trial_ended`
+- `payment_received`
+- `payment_failed`
+- `subscription_renewed`
+- `plan_upgraded`
+- `plan_downgraded`
+- `subscription_suspended`
+- `subscription_reactivated`
+- `cancellation_scheduled`
+- `subscription_cancelled`
+- `subscription_expired`
+- `entitlement_updated`
+- `payment_gateway_callback`
+- `other`
+
+**Event Sources**
+
+Initial supported values:
+
+- `platform_application`
+- `payment_gateway`
+- `background_job`
+- `platform_admin`
+- `authorized_integration`
+- `automated_process`
+
+**Event Statuses**
+
+Initial supported values:
+
+- `received`
+- `pending`
+- `processing`
+- `processed`
+- `failed`
+- `ignored`
+- `dead_letter`
+
+**Constraints and Data Integrity**
+
+- Event type, source and status must use approved values.
+- Event reference must not be empty.
+- Event reference must be unique according to its defined platform scope.
+- Event payload must contain a valid JSON object.
+- Processing attempts must not be negative.
+- Processed events must have a processing timestamp.
+- Failed events must preserve appropriate error information.
+- External event identifiers must follow provider-specific uniqueness rules.
+- Idempotency keys must prevent duplicate business processing.
+- Subscription and firm identifiers must match when both are supplied.
+
+**Indexes**
+
+Proposed indexes:
+
+- Unique index on `event_reference`.
+- Index on `(firm_id, firm_subscription_id, occurred_at DESC)`.
+- Index on `(event_status, created_at)`.
+- Index on `(event_type, occurred_at DESC)`.
+- Index on `(event_source, occurred_at DESC)`.
+- Index on `(correlation_id)`.
+- Index on `(external_event_id)`.
+- Index on `(event_status, processing_attempts, created_at)`.
+
+Provider-specific uniqueness constraints must include the provider or source scope where required.
+
+**Tenant Isolation and RLS**
+
+- Firm-associated events must contain the correct `firm_id`.
+- Firm-facing access must be restricted to the authenticated firm's subscription events.
+- Platform-wide events must use a separate platform-authorized access path.
+- Composite foreign keys must enforce same-firm subscription relationships.
+- Firm administrators must not access raw platform integration payloads unless explicitly authorized.
+- Platform administration must use least-privilege access.
+- Event payloads must not expose unrelated firm data.
+
+**Business and Security Rules**
+
+- Events must be generated by authorized platform services, verified integrations or authorized platform administrators.
+- External payment gateway callbacks must be authenticated and validated.
+- Event processing must be idempotent.
+- Duplicate events must not create duplicate payments, renewals or subscription state changes.
+- Event processing must use controlled background workers.
+- Failed processing must support safe retries.
+- Events that repeatedly fail must be moved to a controlled dead-letter workflow.
+- Sensitive credentials, payment details and unnecessary customer data must not be stored in event payloads.
+- Event processing must generate appropriate subscription history and audit records.
+- Events must not directly grant permissions or bypass subscription entitlement evaluation.
+
+**Data Integrity and Lifecycle**
+
+- Event receipt and durable persistence must occur before asynchronous processing.
+- Event processing must use transactional updates wherever possible.
+- A failed event must not leave partial subscription or payment changes.
+- Processing attempts and failure details must be traceable.
+- Successful processing must record a completion timestamp.
+- Duplicate delivery must be safely recognized.
+- Events must be retained according to platform audit and integration policies.
+- Processed events must not be silently deleted or rewritten.
+- All timestamps must use UTC.
+
+**Design Notes and Open Decisions**
+
+- The system must determine whether this table is an inbound event inbox, an internal domain event store or both.
+- Separate inbox and outbox tables may be required for reliable event delivery.
+- The system must define the exact event catalogue and event versioning strategy.
+- The system must define provider-specific callback authentication and replay protection.
+- The system must establish idempotency key generation and retention.
+- The system must define retry intervals, maximum attempts and dead-letter recovery.
+- The system must determine whether raw provider payloads are retained or sanitized before storage.
+- The system must define event ordering and concurrency handling.
+- The system must determine how events generate `subscription_history` records.
+- The system must define retention, archival and tamper-resistance requirements.
+
+### 3.72 `import_job`
+
+**Purpose**
+
+The `import_job` table records and manages Excel and other approved data-import operations performed by CA firms.
+
+It provides traceability for the complete import lifecycle, including file upload, validation, preview, execution, completion, failure and cancellation.
+
+The initial implementation will primarily support customer master-data imports from Excel files.
+
+Future imports may include:
+
+- Customer records.
+- Customer contact information.
+- Customer tax identity information.
+- Historical customer references.
+- Other approved firm-specific business records.
+
+**Ownership and Tenant Scope**
+
+- Ownership: Firm-Owned.
+- Tenant scope: Firm-scoped.
+- Tenant identifier: `firm_id`.
+- Mandatory PostgreSQL Row-Level Security (RLS).
+- Each import job belongs to exactly one CA firm.
+- Only authorized firm administrators and staff may initiate or review imports according to assigned permissions.
+- Platform administrators must use separately authorized access.
+
+**Proposed Columns**
+
+| Column | Data Type | Nullable | Description |
+|---|---|---|---|
+| `id` | UUID | No | Primary key |
+| `firm_id` | UUID | No | Owning firm |
+| `import_reference` | VARCHAR(100) | No | Firm-specific import reference |
+| `import_type` | VARCHAR(50) | No | Type of data being imported |
+| `source_file_name` | VARCHAR(255) | No | Original uploaded file name |
+| `storage_provider` | VARCHAR(50) | No | Private storage provider |
+| `storage_bucket` | VARCHAR(255) | No | Private storage bucket |
+| `storage_object_key` | VARCHAR(500) | No | Private storage object key |
+| `file_mime_type` | VARCHAR(150) | No | Detected file MIME type |
+| `file_size_bytes` | BIGINT | No | Uploaded file size |
+| `file_checksum` | VARCHAR(128) | No | File integrity checksum |
+| `import_status` | VARCHAR(30) | No | Current import lifecycle status |
+| `total_rows` | INTEGER | No | Total data rows detected |
+| `valid_rows` | INTEGER | No | Rows passing validation |
+| `invalid_rows` | INTEGER | No | Rows failing validation |
+| `imported_rows` | INTEGER | No | Successfully imported rows |
+| `skipped_rows` | INTEGER | No | Rows intentionally skipped |
+| `duplicate_rows` | INTEGER | No | Rows identified as duplicates |
+| `uploaded_by_membership_id` | UUID | No | Membership that initiated the import |
+| `started_at` | TIMESTAMPTZ | Yes | Import execution start |
+| `completed_at` | TIMESTAMPTZ | Yes | Import completion time |
+| `failed_at` | TIMESTAMPTZ | Yes | Import failure time |
+| `failure_summary` | TEXT | Yes | Sanitized failure description |
+| `cancelled_at` | TIMESTAMPTZ | Yes | Cancellation timestamp |
+| `created_at` | TIMESTAMPTZ | No | Record creation timestamp |
+| `updated_at` | TIMESTAMPTZ | No | Last update timestamp |
+
+**Primary Key and Foreign Keys**
+
+- Primary key: `id`.
+- `firm_id` references `firm.id`.
+- `(firm_id, uploaded_by_membership_id)` references `firm_membership` through a same-firm composite foreign key.
+
+**Import Types**
+
+Initial supported values:
+
+- `customer_master`
+- `customer_contact`
+- `customer_tax_identity`
+- `historical_customer_reference`
+- `other`
+
+Only explicitly approved import types may be processed.
+
+**Import Statuses**
+
+Initial supported values:
+
+- `uploaded`
+- `pending_validation`
+- `validating`
+- `validation_completed`
+- `validation_failed`
+- `awaiting_confirmation`
+- `processing`
+- `completed`
+- `completed_with_errors`
+- `failed`
+- `cancelled`
+
+**Constraints and Data Integrity**
+
+- Import reference must not be empty.
+- File name and storage object key must not be empty.
+- File size must be positive and within configured limits.
+- Row counters must not be negative.
+- Invalid, valid, duplicate and imported row counts must remain consistent with the import-processing rules.
+- Completed jobs must have a completion timestamp.
+- Failed jobs must preserve a failure timestamp and sanitized failure summary.
+- Cancelled jobs must preserve a cancellation timestamp.
+- The uploaded file must belong to the same firm as the import job.
+- File checksum must be generated and verified by trusted backend services.
+
+**Indexes**
+
+Proposed indexes:
+
+- Unique index on `(firm_id, import_reference)`.
+- Index on `(firm_id, import_status, created_at DESC)`.
+- Index on `(firm_id, import_type, created_at DESC)`.
+- Index on `(firm_id, uploaded_by_membership_id, created_at DESC)`.
+- Index on `(import_status, created_at)` for authorized background processing.
+- Index on `(firm_id, completed_at)`.
+
+**Tenant Isolation and RLS**
+
+- Every import job must contain `firm_id`.
+- RLS must restrict firm users to their own import jobs.
+- Composite foreign keys must enforce same-firm membership references.
+- Import processing workers must establish the correct tenant context.
+- Background processing must not rely solely on a client-supplied firm identifier.
+- Platform-level operational access must be separately authorized and audited.
+
+**Business and Security Rules**
+
+- Only authorized firm users may initiate imports.
+- Uploads must be stored in private object storage.
+- File extension, actual file format, MIME type and file signature must be validated.
+- Only approved file formats and configured file-size limits are permitted.
+- Uploaded files must be scanned for malware before processing.
+- Files must remain quarantined until required security checks pass.
+- Excel formulas and macros must not be executed.
+- Imported values must be treated as untrusted input.
+- Validation and preview must occur before committing imported records.
+- Users must be able to review validation results before confirming an import.
+- Duplicate detection must follow approved firm-specific business rules.
+- Import execution must use controlled transactions or documented batch-processing strategies.
+- Failed imports must not silently leave inconsistent customer records.
+- Import workers must be idempotent and safe against duplicate job execution.
+- Sensitive tax identifiers must be encrypted and must never appear in ordinary import logs or error reports.
+
+**Data Integrity and Lifecycle**
+
+- An import job must preserve its original uploaded-file reference and checksum.
+- Validation must finish before an import can be confirmed for execution.
+- Row counts must be updated consistently as processing progresses.
+- Successful and failed row outcomes must be traceable.
+- Import completion must reflect actual committed records.
+- Cancellation must prevent further processing where safely possible.
+- Temporary files and intermediate processing data must follow defined cleanup policies.
+- Imported business records must preserve their normal audit and ownership relationships.
+- All timestamps must use UTC.
+
+**Design Notes and Open Decisions**
+
+- The system must determine supported Excel formats and worksheet-selection rules.
+- The system must define column mapping and header-detection behavior.
+- A separate `import_mapping` table will store reusable firm-specific column mappings.
+- A separate `import_row_result` table will record individual row processing outcomes.
+- A separate `import_error` table will preserve structured validation and processing errors.
+- The system must define whether imports are atomic or processed in controlled batches.
+- The system must define rollback and recovery behavior for partially completed batch imports.
+- The system must define duplicate detection and customer matching rules.
+- The system must define maximum file size, row count and processing duration.
+- The system must define temporary file retention and secure deletion.
+- The system must define how cancelled and failed jobs can be retried safely.
+
+### 3.73 `import_mapping`
+
+**Purpose**
+
+The `import_mapping` table stores reusable column-mapping configurations for data-import operations.
+
+It defines how source spreadsheet columns correspond to approved fields in the ITR Management System.
+
+For example:
+
+| Excel Column | System Field |
+|---|---|
+| Client Name | customer_name |
+| PAN Number | pan |
+| Mobile | phone_number |
+| Email ID | email |
+| Assessment Year | assessment_year |
+
+The mapping configuration helps standardize imports and reduce repeated manual configuration.
+
+**Ownership and Tenant Scope**
+
+- Ownership: Firm-Owned.
+- Tenant scope: Firm-scoped.
+- Tenant identifier: `firm_id`.
+- Mandatory PostgreSQL Row-Level Security (RLS).
+- Each mapping belongs to one CA firm.
+- Only authorized firm administrators and staff may create, update, activate or use mappings.
+- Mappings must not be shared across firms without an explicitly authorized platform-level template mechanism.
+
+**Proposed Columns**
+
+| Column | Data Type | Nullable | Description |
+|---|---|---|---|
+| `id` | UUID | No | Primary key |
+| `firm_id` | UUID | No | Owning firm |
+| `mapping_name` | VARCHAR(150) | No | User-friendly mapping name |
+| `mapping_code` | VARCHAR(100) | No | Firm-specific mapping identifier |
+| `import_type` | VARCHAR(50) | No | Applicable import type |
+| `source_format` | VARCHAR(30) | No | Spreadsheet or file format |
+| `mapping_configuration` | JSONB | No | Source-to-system field mappings |
+| `mapping_version` | INTEGER | No | Mapping version number |
+| `mapping_status` | VARCHAR(30) | No | Mapping lifecycle status |
+| `is_default` | BOOLEAN | No | Whether this is the default mapping |
+| `description` | TEXT | Yes | Mapping description |
+| `created_by_membership_id` | UUID | No | Creating firm membership |
+| `updated_by_membership_id` | UUID | No | Last updating firm membership |
+| `created_at` | TIMESTAMPTZ | No | Creation timestamp |
+| `updated_at` | TIMESTAMPTZ | No | Last update timestamp |
+| `archived_at` | TIMESTAMPTZ | Yes | Archival timestamp |
+
+**Primary Key and Foreign Keys**
+
+- Primary key: `id`.
+- `firm_id` references `firm.id`.
+- `(firm_id, created_by_membership_id)` references `firm_membership` through a same-firm composite foreign key.
+- `(firm_id, updated_by_membership_id)` references `firm_membership` through a same-firm composite foreign key.
+
+**Import Types**
+
+Initial supported values:
+
+- `customer_master`
+- `customer_contact`
+- `customer_tax_identity`
+- `historical_customer_reference`
+- `other`
+
+**Source Formats**
+
+Initial supported values:
+
+- `xlsx`
+- `xls`
+- `csv`
+
+Only formats supported by the import-processing service may be configured.
+
+**Mapping Statuses**
+
+Initial supported values:
+
+- `draft`
+- `active`
+- `inactive`
+- `archived`
+
+**Constraints and Data Integrity**
+
+- Mapping name and code must not be empty.
+- Mapping version must be greater than zero.
+- Mapping configuration must contain a valid JSON object.
+- Import type and source format must use approved values.
+- A mapping code must be unique within its firm.
+- Only one active default mapping may exist for a given firm and import type.
+- Mapping configuration must reference approved system fields.
+- Duplicate source-column assignments must be rejected unless explicitly supported.
+- Required system fields must be mapped or supplied through approved defaults.
+- Archived mappings must not be used for new imports.
+
+**Indexes**
+
+Proposed indexes:
+
+- Unique index on `(firm_id, mapping_code)`.
+- Index on `(firm_id, import_type, mapping_status)`.
+- Index on `(firm_id, is_default)`.
+- Index on `(firm_id, created_at DESC)`.
+- Partial unique index on `(firm_id, import_type)` where `is_default = TRUE` and `mapping_status = 'active'`.
+
+**Tenant Isolation and RLS**
+
+- Every mapping must contain `firm_id`.
+- RLS must restrict mapping access to the current firm.
+- Creator and updater memberships must belong to the same firm.
+- Import-processing services must verify that the selected mapping belongs to the import job's firm.
+- Firm users must never be able to retrieve or apply another firm's mapping.
+- Platform-provided templates, if introduced, must use a separate platform-owned model or explicitly defined access mechanism.
+
+**Business and Security Rules**
+
+- Mapping configuration must be validated before activation.
+- Only approved system fields may be selected.
+- Sensitive fields such as PAN must be handled through authorized import services.
+- Mapping configuration must never contain passwords, API keys or other secrets.
+- Source spreadsheet values must always be treated as untrusted input.
+- Formula execution and macro execution are prohibited.
+- A mapping must be compatible with its declared import type and source format.
+- Existing imports must retain the mapping version used during their execution.
+- Changes to an existing mapping must not silently alter historical import results.
+- Mapping creation, modification, activation and archival must be auditable.
+
+**Data Integrity and Lifecycle**
+
+- Mapping configurations must be versioned.
+- Active mappings must pass schema and business-rule validation.
+- Changes must preserve historical versions or an equivalent immutable snapshot.
+- Import jobs must record the exact mapping version used.
+- Archived mappings must remain available for historical reference.
+- Deletion of mappings must not invalidate completed or historical imports.
+- All timestamps must use UTC.
+
+**Design Notes and Open Decisions**
+
+- The system must determine whether mapping versions are stored in this table or in a separate mapping-version table.
+- The system must define the approved system-field catalogue for each import type.
+- The system must define source-column normalization and matching rules.
+- The system must decide whether default values and transformation rules are supported.
+- The system must define date, number, currency and text conversion rules.
+- The system must define how unmapped columns are handled.
+- The system must define whether firm-specific mappings can be copied from platform-provided templates.
+- The system must define mapping compatibility checks when the underlying customer data model changes.
+
+### 3.74 `import_row_result`
+
+**Purpose**
+
+The `import_row_result` table records the processing outcome of each individual data row within an import job.
+
+It provides row-level traceability for validation, duplicate detection, import execution and error resolution.
+
+Examples include:
+
+- A customer row imported successfully.
+- A row rejected because the PAN format is invalid.
+- A row skipped because the customer already exists.
+- A row requiring manual review because a potential duplicate was detected.
+- A row failing because a required field is missing.
+
+**Ownership and Tenant Scope**
+
+- Ownership: Firm-Owned.
+- Tenant scope: Firm-scoped.
+- Tenant identifier: `firm_id`.
+- Mandatory PostgreSQL Row-Level Security (RLS).
+- Every row result belongs to one import job and one CA firm.
+- Only authorized firm users and import-processing services may access row-level results.
+- Platform-level operational access must be separately authorized and audited.
+
+**Proposed Columns**
+
+| Column | Data Type | Nullable | Description |
+|---|---|---|---|
+| `id` | UUID | No | Primary key |
+| `firm_id` | UUID | No | Owning firm |
+| `import_job_id` | UUID | No | Related import job |
+| `source_row_number` | INTEGER | No | Original spreadsheet row number |
+| `row_status` | VARCHAR(30) | No | Processing outcome |
+| `source_row_reference` | VARCHAR(150) | Yes | Reference to the source row or staged record |
+| `normalized_data` | JSONB | Yes | Validated and normalized row data |
+| `created_entity_type` | VARCHAR(100) | Yes | Type of business record created |
+| `created_entity_id` | UUID | Yes | Identifier of the created business record |
+| `matched_entity_type` | VARCHAR(100) | Yes | Type of existing record matched |
+| `matched_entity_id` | UUID | Yes | Identifier of the matched record |
+| `duplicate_match_status` | VARCHAR(30) | Yes | Duplicate detection outcome |
+| `processing_attempts` | INTEGER | No | Number of processing attempts |
+| `processed_at` | TIMESTAMPTZ | Yes | Processing completion timestamp |
+| `created_at` | TIMESTAMPTZ | No | Record creation timestamp |
+| `updated_at` | TIMESTAMPTZ | No | Last update timestamp |
+
+**Primary Key and Foreign Keys**
+
+- Primary key: `id`.
+- `(firm_id, import_job_id)` references `import_job` through a same-firm composite foreign key.
+
+The created and matched entity references are polymorphic. Their integrity must be validated by the backend or by an approved entity-specific association design.
+
+**Row Statuses**
+
+Initial supported values:
+
+- `pending`
+- `validating`
+- `valid`
+- `invalid`
+- `duplicate`
+- `awaiting_review`
+- `ready_to_import`
+- `importing`
+- `imported`
+- `skipped`
+- `failed`
+- `cancelled`
+
+**Duplicate Match Statuses**
+
+Initial supported values:
+
+- `not_checked`
+- `no_match`
+- `possible_match`
+- `confirmed_duplicate`
+- `not_duplicate`
+- `requires_review`
+
+**Constraints and Data Integrity**
+
+- Source row number must be positive.
+- Processing attempts must not be negative.
+- Row status must use an approved value.
+- Duplicate match status must use an approved value.
+- Normalized data, when supplied, must be a valid JSON object.
+- An imported row must have a processing timestamp and an appropriate created-record reference.
+- A skipped row must have an appropriate skip reason recorded in the associated error or result details.
+- Each source row must have at most one authoritative result within an import job.
+- Created and matched entity references must belong to the same firm.
+- Sensitive tax identifiers must not be stored in plaintext within normalized data.
+
+**Indexes**
+
+Proposed indexes:
+
+- Unique index on `(firm_id, import_job_id, source_row_number)`.
+- Index on `(firm_id, import_job_id, row_status)`.
+- Index on `(firm_id, row_status, created_at)`.
+- Index on `(import_job_id, duplicate_match_status)`.
+- Index on `(created_entity_type, created_entity_id)`.
+- Index on `(matched_entity_type, matched_entity_id)`.
+- Index on `(import_job_id, processed_at)`.
+
+**Tenant Isolation and RLS**
+
+- Every row result must contain `firm_id`.
+- RLS must restrict access to the current firm.
+- Composite foreign keys must enforce same-firm import-job ownership.
+- Import workers must establish the correct tenant context before processing.
+- Created and matched records must be checked against the same firm.
+- Firm users must not be able to modify processing outcomes directly through ordinary customer-management APIs.
+- Authorized import services must perform controlled updates.
+
+**Business and Security Rules**
+
+- Every accepted source row must receive an identifiable processing result.
+- Row validation must complete before the row is eligible for import.
+- Invalid rows must not create business records.
+- Possible duplicates must follow the firm's approved duplicate-review policy.
+- Confirmed duplicates must not be silently imported as new customers.
+- Row processing must be idempotent.
+- Retrying a row must not create duplicate business records.
+- Row-level errors must be stored in the associated `import_error` records.
+- Sensitive values must be masked in ordinary screens and logs.
+- Normalized data must contain only fields required for validation and processing.
+- Internal processing metadata must not be exposed to customer-facing APIs.
+
+**Data Integrity and Lifecycle**
+
+- Row results must preserve their original source row number.
+- Processing outcomes must remain traceable to the parent import job.
+- Row counts must reconcile with the parent import job's counters.
+- Successful imports must reference the created business record.
+- Failed and skipped rows must preserve their reasons.
+- Corrections and retries must be traceable.
+- Historical import results must remain available according to retention policy.
+- Temporary source data and normalized data must follow secure cleanup and retention rules.
+- All timestamps must use UTC.
+
+**Design Notes and Open Decisions**
+
+- The system must determine whether normalized row data is stored permanently or only during import processing.
+- The system must define the maximum permitted size of normalized row data.
+- The system must determine how row-level sensitive values are encrypted or excluded.
+- The system must define whether one row can create multiple business records.
+- The system must define the entity-reference strategy for different import types.
+- The system must determine whether retry attempts update the existing row result or create separate attempt-history records.
+- The system must define duplicate matching thresholds and manual-review procedures.
+- The system must define whether skipped rows are counted separately from invalid and duplicate rows.
+- The system must establish reconciliation rules between row results and import-job summary counters.
+
+### 3.75 `import_error`
+
+**Purpose**
+
+The `import_error` table records structured validation errors, data-quality issues and processing failures encountered during an import job.
+
+It helps firm staff identify problems, understand why a row could not be imported and take corrective action.
+
+Examples include:
+
+- Missing mandatory customer name.
+- Invalid PAN format.
+- Invalid email or phone number.
+- Unsupported assessment year.
+- Duplicate customer detected.
+- Invalid date or financial value.
+- Unauthorized or unsupported source field.
+- Database or processing failure.
+
+**Ownership and Tenant Scope**
+
+- Ownership: Firm-Owned.
+- Tenant scope: Firm-scoped.
+- Tenant identifier: `firm_id`.
+- Mandatory PostgreSQL Row-Level Security (RLS).
+- Each error belongs to one firm's import job.
+- Only authorized firm users and import-processing services may access error details.
+- Platform-level operational access must be separately authorized and audited.
+
+**Proposed Columns**
+
+| Column | Data Type | Nullable | Description |
+|---|---|---|---|
+| `id` | UUID | No | Primary key |
+| `firm_id` | UUID | No | Owning firm |
+| `import_job_id` | UUID | No | Related import job |
+| `import_row_result_id` | UUID | Yes | Related spreadsheet row result |
+| `error_code` | VARCHAR(100) | No | Machine-readable error identifier |
+| `error_category` | VARCHAR(50) | No | Error classification |
+| `error_severity` | VARCHAR(20) | No | Error severity |
+| `error_message` | TEXT | No | Human-readable error description |
+| `source_column_name` | VARCHAR(255) | Yes | Source spreadsheet column |
+| `target_field_name` | VARCHAR(150) | Yes | Corresponding system field |
+| `source_row_number` | INTEGER | Yes | Original spreadsheet row number |
+| `error_details` | JSONB | No | Additional sanitized error metadata |
+| `resolution_status` | VARCHAR(30) | No | Error resolution state |
+| `resolution_notes` | TEXT | Yes | Explanation of corrective action |
+| `resolved_by_membership_id` | UUID | Yes | Membership that resolved the error |
+| `resolved_at` | TIMESTAMPTZ | Yes | Resolution timestamp |
+| `created_at` | TIMESTAMPTZ | No | Error creation timestamp |
+| `updated_at` | TIMESTAMPTZ | No | Last update timestamp |
+
+**Primary Key and Foreign Keys**
+
+- Primary key: `id`.
+- `(firm_id, import_job_id)` references `import_job` through a same-firm composite foreign key.
+- `(firm_id, import_row_result_id)` references `import_row_result` through a same-firm composite foreign key when a row result is supplied.
+- `(firm_id, resolved_by_membership_id)` references `firm_membership` through a same-firm composite foreign key when a resolving user is supplied.
+
+An error without a specific row result may represent an import-level validation or processing failure.
+
+When a row result is supplied, it must belong to the same import job.
+
+**Error Categories**
+
+Initial supported values:
+
+- `file_validation`
+- `mapping_validation`
+- `required_field`
+- `data_format`
+- `data_integrity`
+- `duplicate_detection`
+- `authorization`
+- `business_rule`
+- `processing`
+- `system`
+- `other`
+
+**Error Severities**
+
+Initial supported values:
+
+- `info`
+- `warning`
+- `error`
+- `critical`
+
+**Resolution Statuses**
+
+Initial supported values:
+
+- `open`
+- `under_review`
+- `resolved`
+- `ignored`
+- `requires_reimport`
+
+**Constraints and Data Integrity**
+
+- Error code must not be empty.
+- Error message must not be empty.
+- Error category and severity must use approved values.
+- Resolution status must use an approved value.
+- Source row number must be positive when supplied.
+- Error details must contain a valid JSON object.
+- A resolved error must have a resolution timestamp.
+- A supplied resolving membership must belong to the same firm.
+- A supplied row result must belong to the same import job.
+- Error records must not contain plaintext passwords, OTPs, authentication tokens or unnecessary sensitive tax information.
+
+**Indexes**
+
+Proposed indexes:
+
+- Index on `(firm_id, import_job_id, created_at)`.
+- Index on `(firm_id, import_job_id, error_severity)`.
+- Index on `(firm_id, import_row_result_id)`.
+- Index on `(firm_id, error_code)`.
+- Index on `(firm_id, resolution_status, created_at)`.
+- Index on `(firm_id, resolved_by_membership_id, resolved_at)`.
+
+**Tenant Isolation and RLS**
+
+- Every error record must contain `firm_id`.
+- RLS must restrict access to the current firm.
+- Composite foreign keys must enforce same-firm relationships.
+- Import workers must establish the correct tenant context.
+- Error reports must never expose another firm's data.
+- Firm users may view and resolve errors only when authorized.
+- Platform operational access must use separately authorized and audited procedures.
+
+**Business and Security Rules**
+
+- Errors must be generated by trusted import-processing services.
+- Error codes must be stable and suitable for programmatic handling.
+- Error messages must be understandable without exposing internal implementation details.
+- Sensitive source values must not be copied into error messages.
+- Error details must contain only sanitized diagnostic metadata.
+- Errors must be associated with the relevant import job and, where applicable, the specific source row.
+- Warnings must be distinguishable from blocking errors.
+- Critical errors may prevent the entire import from proceeding.
+- Resolving an error must not automatically reimport a row unless an authorized retry operation is explicitly initiated.
+- Error resolution and retry operations must be auditable.
+- Database errors must not expose SQL statements, credentials or internal infrastructure details to ordinary firm users.
+
+**Data Integrity and Lifecycle**
+
+- Error records must preserve their original creation time and source context.
+- Resolution changes must preserve sufficient history for audit purposes.
+- Repeated processing failures must remain traceable.
+- Error counts must reconcile with the relevant row results and import-job summary.
+- Resolved errors must not be silently deleted.
+- Historical errors must follow the platform's retention and archival policies.
+- All timestamps must use UTC.
+
+**Design Notes and Open Decisions**
+
+- The system must define whether resolved errors are updated in place or tracked through a separate error-resolution history table.
+- The system must define which error categories block import execution.
+- The system must define how warnings affect import approval.
+- The system must establish standard error codes and message templates.
+- The system must determine whether one row can have multiple errors of the same type.
+- The system must define how import-level errors without a row result are displayed.
+- The system must define retry behavior after error resolution.
+- The system must define error-report export formats and sensitive-data masking.
+- The system must determine retention periods for detailed error metadata.
+
+### 3.76 `report_definition`
+
+**Purpose**
+
+The `report_definition` table stores metadata and configuration for reports available within the ITR Management System.
+
+It supports predefined platform reports and authorized firm-specific report definitions.
+
+Examples include:
+
+- Customer summary report.
+- ITR filing status report.
+- Pending document report.
+- Staff workload report.
+- Invoice and payment report.
+- Refund tracking report.
+- Assessment-year performance report.
+- Customer import summary report.
+
+The table defines report availability and configuration. It must not itself grant access to underlying business data.
+
+**Ownership and Tenant Scope**
+
+- Ownership: Platform-Owned or Firm-Owned, depending on the report definition.
+- Tenant scope: Global or firm-scoped.
+- `firm_id` is nullable:
+  - `NULL` represents a platform-provided report definition.
+  - A populated value represents a firm-specific report definition.
+- Firm-specific records must use mandatory tenant RLS.
+- Platform-owned definitions must use a separately authorized platform access policy.
+- Firm users may access platform-provided reports only when explicitly enabled and authorized.
+
+**Proposed Columns**
+
+| Column | Data Type | Nullable | Description |
+|---|---|---|---|
+| `id` | UUID | No | Primary key |
+| `firm_id` | UUID | Yes | Owning firm for firm-specific reports |
+| `report_key` | VARCHAR(100) | No | Stable report identifier |
+| `report_name` | VARCHAR(200) | No | Display name |
+| `report_description` | TEXT | Yes | Report description |
+| `report_category` | VARCHAR(50) | No | Report classification |
+| `report_type` | VARCHAR(30) | No | Standard or configurable report |
+| `report_configuration` | JSONB | No | Validated report configuration |
+| `required_permissions` | JSONB | No | Required permission identifiers |
+| `supported_filters` | JSONB | No | Approved filter definitions |
+| `report_status` | VARCHAR(30) | No | Report lifecycle status |
+| `is_exportable` | BOOLEAN | No | Whether export is permitted |
+| `is_sensitive` | BOOLEAN | No | Whether sensitive data is involved |
+| `version_number` | INTEGER | No | Report definition version |
+| `created_by_membership_id` | UUID | Yes | Creating firm membership |
+| `updated_by_membership_id` | UUID | Yes | Updating firm membership |
+| `created_by_platform_user_id` | UUID | Yes | Creating platform administrator |
+| `updated_by_platform_user_id` | UUID | Yes | Updating platform administrator |
+| `created_at` | TIMESTAMPTZ | No | Creation timestamp |
+| `updated_at` | TIMESTAMPTZ | No | Last update timestamp |
+| `archived_at` | TIMESTAMPTZ | Yes | Archival timestamp |
+
+**Primary Key and Foreign Keys**
+
+- Primary key: `id`.
+- `firm_id` references `firm.id` when the definition is firm-owned.
+- Firm creator and updater references must use same-firm composite foreign keys to `firm_membership`.
+- Platform creator and updater references must reference `platform_user.id`.
+
+The creator and updater references must follow an explicit ownership rule. A firm-owned report must not be attributed to a platform administrator unless a separately authorized platform operation is recorded.
+
+**Report Categories**
+
+Initial supported values:
+
+- `customer`
+- `itr`
+- `document`
+- `checklist`
+- `staff`
+- `financial`
+- `refund`
+- `subscription`
+- `import`
+- `audit`
+- `operational`
+- `other`
+
+**Report Types**
+
+Initial supported values:
+
+- `standard`
+- `configurable`
+
+**Report Statuses**
+
+Initial supported values:
+
+- `draft`
+- `active`
+- `inactive`
+- `deprecated`
+- `archived`
+
+**Constraints and Data Integrity**
+
+- Report key and name must not be empty.
+- Report category, type and status must use approved values.
+- Report configuration must contain a valid JSON object.
+- Required permissions and supported filters must contain validated JSON arrays or objects according to their defined schemas.
+- Version number must be greater than zero.
+- A firm-owned definition must have a firm identifier.
+- A platform-owned definition must not contain firm membership creator references.
+- Firm-owned definitions must not contain unauthorized platform ownership references.
+- Report keys must be unique within their ownership scope.
+- Only active report definitions may be used for new report executions.
+
+**Indexes**
+
+Proposed indexes:
+
+- Partial unique index on `(report_key)` where `firm_id IS NULL`.
+- Partial unique index on `(firm_id, report_key)` where `firm_id IS NOT NULL`.
+- Index on `(firm_id, report_category, report_status)`.
+- Index on `(report_status, report_category)`.
+- Index on `(firm_id, updated_at DESC)`.
+- Index on `(is_sensitive, report_status)`.
+
+**Tenant Isolation and RLS**
+
+- Firm-specific report definitions must contain `firm_id`.
+- RLS must restrict firm-owned definitions to the current tenant.
+- Platform-owned definitions must use a separately controlled access path.
+- Platform reports must not automatically provide cross-tenant data access.
+- Report execution must independently enforce tenant context and data permissions.
+- Firm users must not alter platform-provided report definitions.
+- Firm-specific report configurations must not weaken platform security restrictions.
+
+**Business and Security Rules**
+
+- Reports must be generated through approved backend reporting services.
+- Users must have the required permissions before accessing a report.
+- Report execution must enforce firm-level tenant isolation.
+- Sensitive reports must require additional authorization where appropriate.
+- Report configuration must use approved fields, filters, joins and aggregations.
+- Arbitrary SQL execution from user-provided report configurations is prohibited.
+- Report definitions must not bypass RLS or backend authorization.
+- Export permissions must be checked independently from view permissions.
+- Sensitive customer information must be masked or excluded where appropriate.
+- Changes to report definitions must be versioned and auditable.
+- Platform-defined mandatory restrictions must not be overridden by firm configuration.
+
+**Data Integrity and Lifecycle**
+
+- Report definitions must retain a stable report key.
+- Changes must preserve historical versions or equivalent immutable snapshots.
+- Historical report executions must retain the definition version used.
+- Deprecated reports must not be silently substituted with different report logic.
+- Archived definitions must remain available for historical reference.
+- Deletion must not invalidate existing report execution records.
+- All timestamps must use UTC.
+
+**Design Notes and Open Decisions**
+
+- The system must define the approved report catalogue and supported data sources.
+- The system must decide whether report query logic is stored in code, configuration or a controlled combination.
+- The system must define supported filters, grouping, sorting and aggregation rules.
+- The system must determine how report definition versions are preserved.
+- The system must define firm-specific customization limits.
+- The system must define sensitive-report approval and export policies.
+- The system must determine whether platform reports can be copied and customized by firms.
+- The system must define report localization and date/number formatting.
+- The system must define the relationship between report definitions and report execution records.
+- The system must ensure report queries remain efficient and cannot cause unrestricted database scans.
+
+### 3.77 `report_execution`
+
+**Purpose**
+
+The `report_execution` table records individual report-generation requests and their execution lifecycle.
+
+It provides traceability for report access, execution, performance, failures and generated results.
+
+Examples include:
+
+- A firm administrator generating an ITR filing status report.
+- A staff member generating a pending document report.
+- A firm administrator exporting an invoice summary.
+- A platform administrator generating an authorized platform-level operational report.
+
+**Ownership and Tenant Scope**
+
+- Ownership: Firm-Owned or Platform-Owned, according to the report execution context.
+- Tenant scope: Firm-scoped for firm reports; platform-controlled for platform reports.
+- `firm_id` is nullable only for authorized platform-level executions.
+- Firm-specific executions must use mandatory tenant RLS.
+- Platform-level executions must use a separate, restricted access policy.
+- Firm users may view only executions belonging to their own firm and permitted user scope.
+
+**Proposed Columns**
+
+| Column | Data Type | Nullable | Description |
+|---|---|---|---|
+| `id` | UUID | No | Primary key |
+| `firm_id` | UUID | Yes | Owning firm, where applicable |
+| `report_definition_id` | UUID | No | Related report definition |
+| `report_version_number` | INTEGER | No | Definition version used |
+| `execution_reference` | VARCHAR(100) | No | Execution reference |
+| `requested_by_user_id` | UUID | No | User who requested the report |
+| `requested_by_membership_id` | UUID | Yes | Firm membership, for firm executions |
+| `requested_by_platform_user_id` | UUID | Yes | Platform administrator, for platform executions |
+| `execution_type` | VARCHAR(30) | No | Interactive or scheduled execution |
+| `execution_status` | VARCHAR(30) | No | Execution lifecycle status |
+| `requested_filters` | JSONB | No | Validated report filter values |
+| `execution_parameters` | JSONB | No | Approved execution parameters |
+| `result_row_count` | BIGINT | Yes | Number of generated result rows |
+| `result_storage_provider` | VARCHAR(50) | Yes | Private result storage provider |
+| `result_storage_bucket` | VARCHAR(255) | Yes | Private result storage bucket |
+| `result_storage_object_key` | VARCHAR(500) | Yes | Private result storage object key |
+| `result_file_format` | VARCHAR(30) | Yes | Generated file format |
+| `result_file_size_bytes` | BIGINT | Yes | Generated result size |
+| `result_checksum` | VARCHAR(128) | Yes | Result integrity checksum |
+| `started_at` | TIMESTAMPTZ | Yes | Execution start time |
+| `completed_at` | TIMESTAMPTZ | Yes | Successful completion time |
+| `failed_at` | TIMESTAMPTZ | Yes | Failure timestamp |
+| `failure_code` | VARCHAR(100) | Yes | Sanitized failure code |
+| `failure_summary` | TEXT | Yes | Sanitized failure description |
+| `execution_duration_ms` | BIGINT | Yes | Execution duration |
+| `correlation_id` | UUID | Yes | Related operation identifier |
+| `created_at` | TIMESTAMPTZ | No | Record creation timestamp |
+| `updated_at` | TIMESTAMPTZ | No | Last update timestamp |
+
+**Primary Key and Foreign Keys**
+
+- Primary key: `id`.
+- `report_definition_id` references `report_definition.id`.
+- `firm_id` references `firm.id` when supplied.
+- `requested_by_user_id` references `user.id`.
+- Firm membership references must use same-firm composite foreign keys.
+- Platform administrator references must reference `platform_user.id`.
+
+The execution ownership must be consistent with the referenced report definition and requesting actor.
+
+For firm executions, the report definition must be either:
+- A platform-provided report explicitly available to the firm; or
+- A report definition owned by the same firm.
+
+**Execution Types**
+
+Initial supported values:
+
+- `interactive`
+- `scheduled`
+- `background`
+- `platform_operation`
+
+**Execution Statuses**
+
+Initial supported values:
+
+- `queued`
+- `processing`
+- `completed`
+- `completed_with_warnings`
+- `failed`
+- `cancelled`
+- `expired`
+
+**Supported Result Formats**
+
+Initial supported values:
+
+- `csv`
+- `xlsx`
+- `pdf`
+- `json`
+
+Only approved formats should be enabled for each report.
+
+**Constraints and Data Integrity**
+
+- Execution reference must not be empty.
+- Report version number must be positive.
+- Result row count, file size and execution duration must not be negative.
+- Requested filters and execution parameters must contain valid JSON objects.
+- Completed executions must have a completion timestamp.
+- Failed executions must have a failure timestamp.
+- Result storage details must be supplied consistently when a file is generated.
+- Result checksum must be verified before the result is made available.
+- Firm executions must have a valid same-firm membership or an explicitly authorized customer actor, according to the supported report-access model.
+- Platform executions must have a valid platform administrator or approved system actor.
+- Actor references must follow one unambiguous ownership rule.
+
+**Indexes**
+
+Proposed indexes:
+
+- Unique index on `execution_reference`.
+- Index on `(firm_id, created_at DESC)`.
+- Index on `(firm_id, report_definition_id, created_at DESC)`.
+- Index on `(firm_id, execution_status, created_at)`.
+- Index on `(requested_by_user_id, created_at DESC)`.
+- Index on `(requested_by_membership_id, created_at DESC)`.
+- Index on `(report_definition_id, execution_status)`.
+- Index on `(correlation_id)`.
+- Index on `(execution_status, created_at)` for authorized background workers.
+
+**Tenant Isolation and RLS**
+
+- Firm report executions must contain the correct `firm_id`.
+- RLS must restrict firm users to their own tenant's executions.
+- Platform-level executions must use a separately authorized access path.
+- Report definition ownership must be validated before execution.
+- Report queries must independently enforce tenant isolation.
+- Firm users must not retrieve another firm's report results or execution metadata.
+- Background workers must establish trusted tenant context.
+- Access to generated result files must be authorized independently from access to execution metadata.
+
+**Business and Security Rules**
+
+- Every report request must pass backend permission checks.
+- Report execution must use the approved report definition version.
+- User-provided filters must be validated against supported filter definitions.
+- Arbitrary SQL or unapproved query fragments must never be accepted.
+- Large reports must use controlled background processing.
+- Result files must be stored in private object storage.
+- Public object-storage URLs are prohibited.
+- File access must use short-lived authorized download links.
+- Sensitive report exports must follow additional authorization and audit requirements.
+- Expired results must no longer be accessible.
+- Failed executions must preserve sanitized error information.
+- Duplicate execution requests must be handled using an appropriate idempotency strategy.
+- Report execution and download activity must be auditable.
+- Report results must not contain data outside the requester's authorized tenant and record scope.
+
+**Data Integrity and Lifecycle**
+
+- The execution record must be created before background processing begins.
+- Execution status must follow controlled lifecycle transitions.
+- Completion must occur only after result generation and integrity checks succeed.
+- Failed and cancelled executions must preserve their history.
+- Generated files must follow configured retention and cleanup policies.
+- Historical execution metadata must be retained according to audit requirements.
+- Report definition changes must not alter already completed execution records.
+- All timestamps must use UTC.
+
+**Design Notes and Open Decisions**
+
+- The system must determine which reports execute synchronously and which use background jobs.
+- The system must define report execution timeouts and resource limits.
+- The system must determine whether result data is stored as a file, database snapshot or both.
+- The system must define report result retention and expiration periods.
+- The system must establish idempotency and retry rules.
+- The system must determine whether users can rerun a historical report with the same filters.
+- The system must define scheduled-report execution and ownership.
+- The system must establish the actor model for platform, firm, customer and system executions.
+- The system must define report download audit requirements.
+- The system must define how large report exports are partitioned or streamed.
+
+### 3.78 `data_export_job`
+
+**Purpose**
+
+The `data_export_job` table records and manages data-export requests from the ITR Management System.
+
+It supports controlled export of authorized business records into approved file formats.
+
+Examples include:
+
+- Customer master-data export.
+- Customer contact export.
+- ITR case-data export.
+- Document inventory export.
+- Invoice and payment export.
+- Refund tracking export.
+- Audit and operational data export.
+- Authorized data portability requests.
+
+This table manages export requests and their lifecycle. It does not itself authorize access to the underlying records.
+
+**Ownership and Tenant Scope**
+
+- Ownership: Firm-Owned or Platform-Owned, according to the export context.
+- Tenant scope: Firm-scoped for firm exports; platform-controlled for platform exports.
+- `firm_id` is nullable only for authorized platform-level exports.
+- Firm-specific exports must use mandatory tenant RLS.
+- Platform-level exports must use a separate restricted access policy.
+- A firm administrator may request exports only for their own firm and within their assigned permissions.
+
+**Proposed Columns**
+
+| Column | Data Type | Nullable | Description |
+|---|---|---|---|
+| `id` | UUID | No | Primary key |
+| `firm_id` | UUID | Yes | Owning firm, where applicable |
+| `export_reference` | VARCHAR(100) | No | Export request reference |
+| `export_type` | VARCHAR(50) | No | Type of data being exported |
+| `export_format` | VARCHAR(30) | No | Requested output format |
+| `export_scope` | JSONB | No | Approved data selection criteria |
+| `export_filters` | JSONB | No | Validated export filters |
+| `export_status` | VARCHAR(30) | No | Export lifecycle status |
+| `requested_by_user_id` | UUID | No | Requesting user |
+| `requested_by_membership_id` | UUID | Yes | Firm membership for firm exports |
+| `requested_by_platform_user_id` | UUID | Yes | Platform administrator for platform exports |
+| `approval_required` | BOOLEAN | No | Whether additional approval is required |
+| `approved_by_membership_id` | UUID | Yes | Firm approver, where applicable |
+| `approved_by_platform_user_id` | UUID | Yes | Platform approver, where applicable |
+| `approved_at` | TIMESTAMPTZ | Yes | Approval timestamp |
+| `rejection_reason` | TEXT | Yes | Reason for rejection |
+| `record_count` | BIGINT | Yes | Number of exported records |
+| `result_storage_provider` | VARCHAR(50) | Yes | Private storage provider |
+| `result_storage_bucket` | VARCHAR(255) | Yes | Private storage bucket |
+| `result_storage_object_key` | VARCHAR(500) | Yes | Private storage object key |
+| `result_file_size_bytes` | BIGINT | Yes | Generated file size |
+| `result_checksum` | VARCHAR(128) | Yes | File integrity checksum |
+| `requested_at` | TIMESTAMPTZ | No | Request timestamp |
+| `started_at` | TIMESTAMPTZ | Yes | Processing start |
+| `completed_at` | TIMESTAMPTZ | Yes | Processing completion |
+| `expires_at` | TIMESTAMPTZ | Yes | Download expiration |
+| `downloaded_at` | TIMESTAMPTZ | Yes | Latest successful download time |
+| `failed_at` | TIMESTAMPTZ | Yes | Failure timestamp |
+| `failure_code` | VARCHAR(100) | Yes | Sanitized failure code |
+| `failure_summary` | TEXT | Yes | Sanitized failure description |
+| `correlation_id` | UUID | Yes | Related operation identifier |
+| `created_at` | TIMESTAMPTZ | No | Record creation timestamp |
+| `updated_at` | TIMESTAMPTZ | No | Last update timestamp |
+
+**Primary Key and Foreign Keys**
+
+- Primary key: `id`.
+- `firm_id` references `firm.id` when supplied.
+- `requested_by_user_id` references `user.id`.
+- Firm membership references must use same-firm composite foreign keys.
+- Platform administrator references must reference `platform_user.id`.
+
+Approval references must follow the export ownership and approval policy. An export must not be approved by an unauthorized actor or by its requester where segregation of duties is required.
+
+**Export Types**
+
+Initial supported values:
+
+- `customer_master`
+- `customer_contact`
+- `customer_tax_identity`
+- `customer_itr`
+- `document_inventory`
+- `financial_records`
+- `refund_records`
+- `audit_records`
+- `operational_data`
+- `customer_data_portability`
+- `other`
+
+**Export Formats**
+
+Initial supported values:
+
+- `csv`
+- `xlsx`
+- `pdf`
+- `json`
+
+Only approved formats should be enabled for each export type.
+
+**Export Statuses**
+
+Initial supported values:
+
+- `requested`
+- `pending_approval`
+- `approved`
+- `rejected`
+- `queued`
+- `processing`
+- `completed`
+- `failed`
+- `cancelled`
+- `expired`
+
+**Constraints and Data Integrity**
+
+- Export reference must not be empty.
+- Export type and format must use approved values.
+- Export scope and filters must contain valid JSON objects.
+- Record count and file size must not be negative.
+- Completed exports must have a completion timestamp.
+- Expired exports must have an expiration timestamp.
+- Approval timestamps and approver references must be consistent.
+- Firm exports must have a valid firm actor and tenant context.
+- Platform exports must have a valid platform or authorized system actor.
+- Storage details must be supplied consistently when a result file exists.
+- Export result checksums must be verified before download access is granted.
+
+**Indexes**
+
+Proposed indexes:
+
+- Unique index on `export_reference`.
+- Index on `(firm_id, export_status, requested_at DESC)`.
+- Index on `(firm_id, export_type, requested_at DESC)`.
+- Index on `(requested_by_user_id, requested_at DESC)`.
+- Index on `(requested_by_membership_id, requested_at DESC)`.
+- Index on `(export_status, requested_at)` for authorized background workers.
+- Index on `(expires_at)`.
+- Index on `(correlation_id)`.
+
+**Tenant Isolation and RLS**
+
+- Firm-specific exports must contain the correct `firm_id`.
+- RLS must restrict firm users to their own firm's export jobs.
+- Platform-level exports must use a separate restricted access policy.
+- Export filters must be evaluated under the authenticated tenant context.
+- Export services must independently verify access to every exported data category.
+- Customer tax identity, financial and document data must require appropriate permissions.
+- Generated files must not be accessible through public URLs.
+- Background workers must establish trusted tenant context.
+- Download access must be authorized independently from access to export metadata.
+
+**Business and Security Rules**
+
+- Export requests must pass backend permission checks.
+- Sensitive exports must require additional approval where platform or firm policy demands it.
+- Export approval must not automatically grant permission to access unrelated records.
+- Export filters must use approved fields and operators.
+- Arbitrary SQL execution through export configuration is prohibited.
+- Data must be restricted to the requester's authorized firm and record scope.
+- Sensitive identifiers must be masked or excluded unless full-value export is explicitly authorized.
+- Export files must be generated in private object storage.
+- Short-lived, authorized download links must be used.
+- Download access must be logged.
+- Export files must have configurable expiration and secure deletion.
+- Failed and cancelled exports must not leave publicly accessible files.
+- Export requests and approval decisions must be auditable.
+- Customer data portability requests must follow identity verification and applicable legal requirements.
+- Exports must not include passwords, authentication tokens, MFA secrets or other credentials.
+
+**Data Integrity and Lifecycle**
+
+- Export metadata must be persisted before processing begins.
+- Approval must occur before processing when required.
+- Processing must use a consistent and authorized data scope.
+- Export results must preserve the filters and export definition used.
+- File generation must complete before download access is enabled.
+- Expired exports must no longer be downloadable.
+- Failed and cancelled exports must preserve their history.
+- Generated files must be securely removed according to retention policy.
+- Historical export metadata must remain available for audit and compliance purposes.
+- All timestamps must use UTC.
+
+**Design Notes and Open Decisions**
+
+- The system must define which export categories require approval.
+- The system must establish role-specific export permissions.
+- The system must define sensitive-field masking and full-value export rules.
+- The system must define export file size and record-count limits.
+- The system must determine whether large exports require partitioning or streaming.
+- The system must define file expiration and retention periods.
+- The system must establish download-count and repeated-download policies.
+- The system must define customer data portability verification and approval workflows.
+- The system must determine whether exports need immutable snapshots for reproducibility.
+- The system must define the relationship between `report_execution` and `data_export_job` to avoid duplicating report-export functionality.
+- The system must establish export audit-event requirements.
+
+### 3.79 `support_ticket`
+
+**Purpose**
+
+The `support_ticket` table stores support requests submitted by CA firms to the ITR Management System platform support team.
+
+It provides a structured mechanism for reporting technical problems, requesting assistance and tracking support resolution.
+
+Examples include:
+
+- Login and authentication problems.
+- Firm configuration assistance.
+- Import-processing failures.
+- Subscription and billing queries.
+- Document upload problems.
+- Security incident reporting.
+- Feature requests.
+- General platform assistance.
+
+This table represents support between a CA firm and the SaaS platform. It is separate from customer conversations maintained within an individual CA firm.
+
+**Ownership and Tenant Scope**
+
+- Ownership: Platform-Owned, with a firm relationship.
+- Tenant scope: Firm-associated and platform-controlled.
+- `firm_id` identifies the requesting firm.
+- Firm administrators may create and view support tickets belonging to their own firm.
+- Authorized platform support personnel may access tickets according to their assigned support permissions.
+- Firm staff must not access another firm's support tickets.
+- Platform support access to firm business data must not be implied by ticket access.
+
+**Proposed Columns**
+
+| Column | Data Type | Nullable | Description |
+|---|---|---|---|
+| `id` | UUID | No | Primary key |
+| `firm_id` | UUID | No | Requesting firm |
+| `ticket_reference` | VARCHAR(100) | No | Human-readable ticket reference |
+| `ticket_subject` | VARCHAR(255) | No | Support request subject |
+| `ticket_description` | TEXT | No | Initial problem description |
+| `ticket_category` | VARCHAR(50) | No | Support classification |
+| `ticket_priority` | VARCHAR(20) | No | Support priority |
+| `ticket_status` | VARCHAR(30) | No | Ticket lifecycle status |
+| `requester_user_id` | UUID | No | User who submitted the request |
+| `assigned_platform_user_id` | UUID | Yes | Assigned platform support administrator |
+| `related_entity_type` | VARCHAR(100) | Yes | Related business or platform entity type |
+| `related_entity_id` | UUID | Yes | Related entity identifier |
+| `resolution_summary` | TEXT | Yes | Final resolution description |
+| `resolved_by_platform_user_id` | UUID | Yes | Platform administrator who resolved the ticket |
+| `resolved_at` | TIMESTAMPTZ | Yes | Resolution timestamp |
+| `closed_at` | TIMESTAMPTZ | Yes | Closure timestamp |
+| `reopened_at` | TIMESTAMPTZ | Yes | Most recent reopening timestamp |
+| `first_response_at` | TIMESTAMPTZ | Yes | First support response timestamp |
+| `due_at` | TIMESTAMPTZ | Yes | Target resolution or response deadline |
+| `created_at` | TIMESTAMPTZ | No | Ticket creation timestamp |
+| `updated_at` | TIMESTAMPTZ | No | Last update timestamp |
+| `deleted_at` | TIMESTAMPTZ | Yes | Controlled soft-deletion timestamp |
+
+**Primary Key and Foreign Keys**
+
+- Primary key: `id`.
+- `firm_id` references `firm.id`.
+- `requester_user_id` references `user.id`.
+- `assigned_platform_user_id` references `platform_user.id`.
+- `resolved_by_platform_user_id` references `platform_user.id`.
+
+The requester must have an active and authorized relationship with the requesting firm when creating the ticket.
+
+Firm membership or customer relationship authorization must be validated by the backend.
+
+Related entity references are polymorphic and must be validated against an approved entity catalogue. A related entity must not expose another firm's information.
+
+**Ticket Categories**
+
+Initial supported values:
+
+- `technical_issue`
+- `authentication`
+- `account_configuration`
+- `data_import`
+- `document_management`
+- `subscription_billing`
+- `security_incident`
+- `feature_request`
+- `general_enquiry`
+- `other`
+
+**Ticket Priorities**
+
+Initial supported values:
+
+- `low`
+- `normal`
+- `high`
+- `urgent`
+- `critical`
+
+**Ticket Statuses**
+
+Initial supported values:
+
+- `open`
+- `assigned`
+- `in_progress`
+- `waiting_for_firm`
+- `waiting_for_platform`
+- `resolved`
+- `closed`
+- `reopened`
+- `cancelled`
+
+**Constraints and Data Integrity**
+
+- Ticket reference and subject must not be empty.
+- Ticket description must not be empty.
+- Category, priority and status must use approved values.
+- Requester must be authorized for the associated firm.
+- Assigned and resolving platform users must reference valid platform administration records.
+- Resolved tickets must have a resolution timestamp and appropriate resolution information.
+- Closed tickets must have a closure timestamp.
+- Reopened tickets must preserve their previous resolution history.
+- A ticket's firm identifier must remain consistent throughout its lifecycle.
+- Related entity references must be validated against the requesting firm's authorized records.
+
+**Indexes**
+
+Proposed indexes:
+
+- Unique index on `ticket_reference`.
+- Index on `(firm_id, ticket_status, created_at DESC)`.
+- Index on `(firm_id, ticket_category, created_at DESC)`.
+- Index on `(firm_id, ticket_priority, created_at DESC)`.
+- Index on `(requester_user_id, created_at DESC)`.
+- Index on `(assigned_platform_user_id, ticket_status, priority)`.
+- Index on `(ticket_status, due_at)`.
+- Index on `(firm_id, resolved_at DESC)`.
+
+**Tenant Isolation and RLS**
+
+- Every support ticket must contain `firm_id`.
+- Firm-facing RLS must restrict access to the requesting firm's tickets.
+- Platform support access must use a separate, explicitly authorized policy.
+- Platform support personnel must have least-privilege access.
+- Access to a support ticket must not automatically grant access to the firm's customers, tax identifiers, documents or financial records.
+- Related entity access must be independently authorized.
+- All exceptional platform access must be recorded and audited.
+
+**Business and Security Rules**
+
+- Only authorized users may submit support tickets for a firm.
+- Platform support staff must be assigned appropriate support permissions.
+- Critical security incidents must follow a separate security incident response procedure.
+- Sensitive tax information and authentication credentials must not be included unnecessarily in ticket descriptions.
+- Attachments must use the approved private document-storage and malware-scanning processes.
+- Platform support personnel must not request passwords, OTPs or authentication secrets.
+- Support access to production business data must require an approved and auditable exceptional-access process.
+- Ticket assignment, priority changes, status changes and resolution must be auditable.
+- Support tickets must not be used as a substitute for platform audit or security-event records.
+- Customer-facing firm support conversations must remain separate from platform support tickets.
+
+**Data Integrity and Lifecycle**
+
+- Every ticket must have a unique reference.
+- Ticket status changes must follow an approved transition process.
+- First response, resolution and closure timestamps must reflect actual events.
+- Reopening a ticket must preserve previous resolution information.
+- Resolved tickets must remain available for historical reference.
+- Soft deletion must not silently remove security or compliance evidence.
+- Ticket closure and archival must follow retention policies.
+- All timestamps must use UTC.
+
+**Design Notes and Open Decisions**
+
+- The system must determine whether support tickets can be created by firm staff as well as firm administrators.
+- The system must define support SLA targets by priority and category.
+- The system must determine whether platform support teams require a separate `platform_support_team` and membership model.
+- The system must define ticket escalation and reassignment rules.
+- The system must define the relationship between support tickets and platform support cases.
+- The system must determine whether security incidents require a dedicated incident-management workflow.
+- The system must define customer-visible versus internal support notes.
+- The system must establish attachment limits and retention policies.
+- The system must define ticket reopening and closure policies.
+- The system must establish support access auditing and exceptional production-data access procedures.
+
+### 3.80 `support_ticket_message`
+
+**Purpose**
+
+The `support_ticket_message` table stores individual messages exchanged within a platform support ticket.
+
+It maintains the communication history between the requesting CA firm and authorized platform support personnel.
+
+Examples include:
+
+- Initial support clarification.
+- Additional information supplied by the firm.
+- Troubleshooting instructions from platform support.
+- Technical updates.
+- Resolution explanations.
+- Follow-up questions.
+- Internal platform support notes.
+
+Internal support notes must remain separate from messages visible to the requesting firm.
+
+**Ownership and Tenant Scope**
+
+- Ownership: Platform-Owned, with a firm relationship inherited from the parent support ticket.
+- Tenant scope: Firm-associated and platform-controlled.
+- Tenant identifier: `firm_id`.
+- Mandatory RLS for firm-facing access.
+- Every message belongs to exactly one support ticket.
+- Firm users may access only messages belonging to tickets they are authorized to view.
+- Platform support personnel may access messages according to their support permissions.
+- Internal platform notes must never be exposed through ordinary firm-facing APIs.
+
+**Proposed Columns**
+
+| Column | Data Type | Nullable | Description |
+|---|---|---|---|
+| `id` | UUID | No | Primary key |
+| `firm_id` | UUID | No | Associated firm |
+| `support_ticket_id` | UUID | No | Parent support ticket |
+| `sender_user_id` | UUID | No | Sending user |
+| `sender_platform_user_id` | UUID | Yes | Platform administrator, where applicable |
+| `message_type` | VARCHAR(30) | No | Message classification |
+| `message_visibility` | VARCHAR(30) | No | Customer-facing or internal |
+| `message_content` | TEXT | No | Message body |
+| `message_status` | VARCHAR(30) | No | Message lifecycle status |
+| `reply_to_message_id` | UUID | Yes | Parent message being answered |
+| `edited_at` | TIMESTAMPTZ | Yes | Last edit timestamp |
+| `sent_at` | TIMESTAMPTZ | Yes | Message sending timestamp |
+| `created_at` | TIMESTAMPTZ | No | Record creation timestamp |
+| `updated_at` | TIMESTAMPTZ | No | Last update timestamp |
+| `deleted_at` | TIMESTAMPTZ | Yes | Controlled soft-deletion timestamp |
+
+**Primary Key and Foreign Keys**
+
+- Primary key: `id`.
+- `(firm_id, support_ticket_id)` references `support_ticket` through a same-firm composite foreign key.
+- `sender_user_id` references `user.id`.
+- `sender_platform_user_id` references `platform_user.id`.
+- `(firm_id, support_ticket_id, reply_to_message_id)` must reference a message belonging to the same ticket, using an appropriate composite self-referencing constraint.
+
+Sender attribution must follow an explicit actor model:
+
+- Firm-side messages must identify an authorized firm user.
+- Platform-side messages must identify an authorized platform administrator.
+- System-generated messages must use an explicitly defined system actor representation.
+
+The sender must be authorized for the associated support ticket.
+
+**Message Types**
+
+Initial supported values:
+
+- `text`
+- `system`
+- `internal_note`
+- `automated_update`
+- `resolution`
+
+**Message Visibility**
+
+Initial supported values:
+
+- `firm_visible`
+- `platform_internal`
+
+**Message Statuses**
+
+Initial supported values:
+
+- `draft`
+- `sent`
+- `failed`
+- `deleted`
+
+**Constraints and Data Integrity**
+
+- Message content must not be empty for sent messages.
+- Message type, visibility and status must use approved values.
+- Sender attribution must identify one valid actor type.
+- Platform internal messages must be created by authorized platform personnel or approved system services.
+- Firm-visible messages must follow the support ticket's firm authorization rules.
+- Reply references must point to messages in the same support ticket.
+- Edited and deleted messages must preserve appropriate historical evidence.
+- Sent messages must have a sending timestamp.
+- A firm user must never be able to create or modify platform-internal messages.
+
+**Indexes**
+
+Proposed indexes:
+
+- Index on `(firm_id, support_ticket_id, sent_at)`.
+- Index on `(firm_id, support_ticket_id, message_visibility, sent_at)`.
+- Index on `(sender_user_id, created_at DESC)`.
+- Index on `(sender_platform_user_id, created_at DESC)`.
+- Index on `(support_ticket_id, reply_to_message_id)`.
+- Index on `(firm_id, message_status, created_at)`.
+
+**Tenant Isolation and RLS**
+
+- Every message must contain the parent ticket's `firm_id`.
+- RLS must restrict firm access to authorized support tickets belonging to the current firm.
+- Composite foreign keys must enforce same-firm parent relationships.
+- Firm-facing APIs must filter out `platform_internal` messages.
+- Platform support access must use separately authorized policies.
+- Background services must establish the correct tenant context.
+- Message attachments must independently enforce document authorization.
+- No firm user may retrieve another firm's support conversation.
+
+**Business and Security Rules**
+
+- Only authorized participants may send messages.
+- Firm users may send only firm-visible messages.
+- Platform support personnel may send firm-visible replies or platform-internal notes according to their permissions.
+- Internal notes must never trigger customer-facing notifications.
+- System messages must have identifiable and auditable origins.
+- Message content must be validated and safely rendered to prevent stored cross-site scripting (XSS).
+- Passwords, OTPs, authentication tokens and other secrets must not be included in messages.
+- Sensitive customer tax information must not be unnecessarily copied into support conversations.
+- Attachments must use the approved document-management and malware-scanning workflow.
+- Editing, deletion and visibility changes must be auditable.
+- Message creation and related ticket activity updates must be transactionally consistent.
+
+**Data Integrity and Lifecycle**
+
+- Every message must belong to a valid support ticket.
+- Messages must preserve sender and timestamp information.
+- Reply relationships must remain within the same ticket.
+- Internal notes must retain their restricted visibility.
+- Message edits must preserve sufficient historical information for audit purposes.
+- Soft deletion must not silently erase required support or compliance evidence.
+- Ticket closure must not automatically delete its messages.
+- All timestamps must use UTC.
+
+**Design Notes and Open Decisions**
+
+- The system must decide whether message edits are allowed after sending.
+- A separate `support_ticket_message_history` table may be required for immutable edit history.
+- The system must define the exact actor model for firm users, platform users and system-generated messages.
+- The system must determine whether multiple participants from one firm can participate in a ticket.
+- The system must define attachment limits and supported file types.
+- The system must define whether internal notes can mention or reference external support systems.
+- The system must establish notification rules for new replies.
+- The system must define message retention and archival policies.
+- The system must determine whether a separate support-ticket event history table is required.
+
+### 3.81 `support_ticket_attachment`
+
+**Purpose**
+
+The `support_ticket_attachment` table stores metadata linking documents to messages within platform support tickets.
+
+It allows authorized firm users and platform support personnel to exchange supporting files without bypassing the platform's document security controls.
+
+Examples include:
+
+- Screenshots of application errors.
+- Sanitized Excel import samples.
+- Error reports.
+- Approved diagnostic files.
+- Configuration examples.
+- Supporting documents requested by platform support.
+
+The actual file content must remain in the existing private document-storage system.
+
+**Ownership and Tenant Scope**
+
+- Ownership: Platform-Owned, with a firm relationship inherited from the parent support ticket.
+- Tenant scope: Firm-associated and platform-controlled.
+- Tenant identifier: `firm_id`.
+- Mandatory RLS for firm-facing access.
+- Every attachment belongs to one support ticket message.
+- Firm users may access only attachments associated with messages they are authorized to view.
+- Platform support access must follow separately authorized support permissions.
+- Internal-message attachments must never be exposed through firm-facing APIs.
+
+**Proposed Columns**
+
+| Column | Data Type | Nullable | Description |
+|---|---|---|---|
+| `id` | UUID | No | Primary key |
+| `firm_id` | UUID | No | Associated firm |
+| `support_ticket_id` | UUID | No | Parent support ticket |
+| `support_ticket_message_id` | UUID | No | Message containing the attachment |
+| `document_id` | UUID | No | Related document record |
+| `document_version_id` | UUID | Yes | Specific document version |
+| `attachment_name` | VARCHAR(255) | No | Display name |
+| `attachment_description` | TEXT | Yes | Attachment description |
+| `display_order` | INTEGER | No | Display sequence |
+| `uploaded_by_user_id` | UUID | No | Uploading user |
+| `created_at` | TIMESTAMPTZ | No | Attachment creation timestamp |
+| `deleted_at` | TIMESTAMPTZ | Yes | Controlled removal timestamp |
+
+**Primary Key and Foreign Keys**
+
+- Primary key: `id`.
+- `(firm_id, support_ticket_id)` references `support_ticket` through a same-firm composite foreign key.
+- `(firm_id, support_ticket_id, support_ticket_message_id)` must reference a message belonging to the same ticket.
+- `(firm_id, document_id)` references the document record through a same-firm composite foreign key.
+- `(firm_id, document_id, document_version_id)` must reference a version belonging to the specified document.
+- `uploaded_by_user_id` references `user.id`.
+
+The uploading user must be authorized to send or receive the parent message and access the associated document.
+
+**Constraints and Data Integrity**
+
+- Attachment name must not be empty.
+- Display order must be nonnegative.
+- Attachment must reference a valid message and document.
+- The document must belong to the same firm as the support ticket.
+- The document version, when supplied, must belong to the referenced document.
+- An attachment must not reference a platform-internal message for firm-visible delivery.
+- Duplicate attachment references within the same message must be prevented according to the attachment uniqueness policy.
+- Deleted attachments must retain sufficient historical metadata for audit purposes.
+
+**Indexes**
+
+Proposed indexes:
+
+- Index on `(firm_id, support_ticket_id, created_at)`.
+- Index on `(firm_id, support_ticket_message_id, display_order)`.
+- Index on `(firm_id, document_id)`.
+- Index on `(document_id, document_version_id)`.
+- Index on `(uploaded_by_user_id, created_at DESC)`.
+- Partial index on `(firm_id, support_ticket_id)` where `deleted_at IS NULL`.
+
+**Tenant Isolation and RLS**
+
+- Every attachment must contain `firm_id`.
+- RLS must restrict access to the current firm's authorized support messages.
+- Composite foreign keys must enforce same-firm relationships.
+- Attachment access must be checked against the parent message visibility.
+- Platform-internal message attachments must remain restricted to authorized platform personnel.
+- Document access must be independently authorized.
+- Short-lived authorized download links must be used.
+- Public object-storage access is prohibited.
+
+**Business and Security Rules**
+
+- Attachments must be uploaded through authorized support workflows.
+- Actual files must use the existing private document-management and storage infrastructure.
+- File type, extension, MIME type, signature and size must be validated.
+- Malware scanning and quarantine rules must be enforced before attachment availability.
+- Untrusted files must not be made available for download.
+- Sensitive files must follow the applicable document access classification.
+- Attachment downloads must be logged through the document-access auditing mechanism.
+- Internal support attachments must not be included in customer-facing notifications.
+- Removing an attachment from a message must not automatically delete the underlying document.
+- Uploading users must not be able to bypass document permissions through message attachment references.
+- Attachment creation, removal and download activity must be auditable.
+
+**Data Integrity and Lifecycle**
+
+- Attachment metadata must be created only after the document has been registered through the document-management workflow.
+- Attachment references must remain consistent with the parent message and ticket.
+- Document versions must remain identifiable.
+- Removal must preserve historical evidence.
+- Deleting a support ticket must not automatically delete the underlying documents.
+- Document retention and legal-hold policies must take precedence over attachment removal.
+- All timestamps must use UTC.
+
+**Design Notes and Open Decisions**
+
+- The system must decide whether support attachments should reuse the existing `document` table or use a dedicated platform support-document model.
+- The system must define maximum file size and allowed file types.
+- The system must establish whether a document can be attached to multiple support messages.
+- The system must define attachment replacement and version-selection rules.
+- The system must define firm-visible versus platform-internal attachment handling.
+- The system must establish retention and deletion policies.
+- The system must determine whether platform support attachments require a separate security classification.
+- The system must define how attachment access is represented in document-access logs.
+
+### 3.82 `platform_support_case`
+
+**Purpose**
+
+The `platform_support_case` table records privileged platform-level support and investigation cases involving CA firms.
+
+It provides a controlled mechanism for platform administrators and authorized support personnel to investigate technical problems, resolve operational issues and perform approved support activities.
+
+Examples include:
+
+- Tenant configuration investigations.
+- Complex Excel import failures.
+- Firm account recovery assistance.
+- Tenant data integrity investigations.
+- Production troubleshooting.
+- Security-related support investigations.
+- Approved exceptional access to firm data.
+
+This table does not grant access by itself. Every privileged operation must pass a separate authorization and approval process.
+
+**Ownership and Tenant Scope**
+
+- Ownership: Platform-Owned, with an explicit firm relationship.
+- Tenant scope: Firm-associated and platform-controlled.
+- Tenant identifier: `firm_id`.
+- Platform support personnel may access cases according to their assigned permissions.
+- Firm administrators may view appropriate case information relating to their own firm.
+- Access to tenant business data must remain separately authorized.
+- Exceptional access must be justified, time-limited and auditable.
+
+**Proposed Columns**
+
+| Column | Data Type | Nullable | Description |
+|---|---|---|---|
+| `id` | UUID | No | Primary key |
+| `firm_id` | UUID | No | Associated firm |
+| `case_reference` | VARCHAR(100) | No | Unique support case reference |
+| `case_type` | VARCHAR(50) | No | Support case classification |
+| `case_priority` | VARCHAR(20) | No | Case priority |
+| `case_status` | VARCHAR(30) | No | Case lifecycle status |
+| `case_title` | VARCHAR(255) | No | Case title |
+| `case_description` | TEXT | No | Detailed case description |
+| `business_justification` | TEXT | No | Reason for platform intervention |
+| `requested_by_user_id` | UUID | Yes | Requesting firm user |
+| `created_by_platform_user_id` | UUID | Yes | Platform administrator creating the case |
+| `assigned_to_platform_user_id` | UUID | Yes | Assigned support administrator |
+| `approved_by_platform_user_id` | UUID | Yes | Authorizing platform administrator |
+| `approval_status` | VARCHAR(30) | No | Approval state |
+| `approval_reason` | TEXT | Yes | Approval justification |
+| `approved_at` | TIMESTAMPTZ | Yes | Approval timestamp |
+| `started_at` | TIMESTAMPTZ | Yes | Investigation start |
+| `resolved_at` | TIMESTAMPTZ | Yes | Resolution timestamp |
+| `closed_at` | TIMESTAMPTZ | Yes | Case closure timestamp |
+| `resolution_summary` | TEXT | Yes | Resolution details |
+| `correlation_id` | UUID | Yes | Related operation correlation |
+| `created_at` | TIMESTAMPTZ | No | Creation timestamp |
+| `updated_at` | TIMESTAMPTZ | No | Last update timestamp |
+| `deleted_at` | TIMESTAMPTZ | Yes | Controlled soft-deletion timestamp |
+
+**Primary Key and Foreign Keys**
+
+- Primary key: `id`.
+- `firm_id` references `firm.id`.
+- `requested_by_user_id` references `user.id`.
+- `created_by_platform_user_id` references `platform_user.id`.
+- `assigned_to_platform_user_id` references `platform_user.id`.
+- `approved_by_platform_user_id` references `platform_user.id`.
+
+The requester must have an authorized relationship with the associated firm.
+
+The case creator, assignee and approver must have appropriate platform permissions.
+
+**Case Types**
+
+Initial supported values:
+
+- `technical_investigation`
+- `tenant_configuration`
+- `data_integrity`
+- `data_import`
+- `account_recovery`
+- `security_investigation`
+- `production_troubleshooting`
+- `privileged_data_access`
+- `other`
+
+**Case Priorities**
+
+- `low`
+- `normal`
+- `high`
+- `urgent`
+- `critical`
+
+**Case Statuses**
+
+- `open`
+- `assigned`
+- `awaiting_approval`
+- `approved`
+- `in_progress`
+- `waiting_for_firm`
+- `waiting_for_platform`
+- `resolved`
+- `closed`
+- `rejected`
+- `cancelled`
+
+**Approval Statuses**
+
+- `not_required`
+- `pending`
+- `approved`
+- `rejected`
+- `revoked`
+- `expired`
+
+**Constraints and Data Integrity**
+
+- Case reference must be unique.
+- Case title, description and business justification must not be empty.
+- Case type, priority, status and approval status must use approved values.
+- Approval records must identify the approving platform administrator.
+- The case creator and approver should be different individuals for privileged production-data access.
+- A case cannot enter an approved state without the required approval.
+- An investigation cannot start before required approvals are completed.
+- Closed cases must have a closure timestamp.
+- Resolved cases must have a resolution summary.
+- Approval revocation or expiry must prevent subsequent privileged operations.
+- Case status changes must be recorded in an immutable history mechanism.
+
+**Indexes**
+
+Proposed indexes:
+
+- Unique index on `case_reference`.
+- Index on `(firm_id, case_status, created_at DESC)`.
+- Index on `(firm_id, case_type, created_at DESC)`.
+- Index on `(case_priority, case_status)`.
+- Index on `(assigned_to_platform_user_id, case_status)`.
+- Index on `(approval_status, created_at)`.
+- Index on `(created_by_platform_user_id, created_at DESC)`.
+- Index on `correlation_id`.
+
+**Tenant Isolation and RLS**
+
+- Every case must identify the associated firm.
+- Firm administrators may access only cases associated with their own firm.
+- Platform support personnel must use separately authorized platform-level access.
+- Firm-level RLS must not be bypassed merely because a platform support case exists.
+- A support case does not automatically grant permission to inspect customer tax records, documents or financial information.
+- Any approved exceptional access must be restricted to the specific firm, resources, purpose and time period.
+- All privileged operations must be associated with the relevant support case.
+
+**Business and Security Rules**
+
+- Platform support cases must have a documented business justification.
+- Privileged access must require explicit approval from an authorized independent platform administrator.
+- The requester, operator and approver must be separately identifiable.
+- Emergency access must follow a documented break-glass procedure.
+- Emergency access must be time-limited and generate immediate security alerts.
+- Access must be restricted to the minimum data necessary.
+- Production data must not be copied into local development environments without an approved data-handling process.
+- Support personnel must not use customer credentials or impersonate customers to bypass authorization.
+- Sensitive tax identifiers and financial records must remain protected.
+- Every privileged read, modification, export or administrative action must generate appropriate audit evidence.
+- Revoking or closing a support case must terminate any associated temporary access grants.
+- Support case approval must never replace ordinary backend authorization checks.
+
+**Data Integrity and Lifecycle**
+
+- Case creation, approval, assignment, resolution and closure must be recorded.
+- Approval decisions must remain historically traceable.
+- A rejected or revoked approval must not be overwritten.
+- Case closure must not delete associated audit or security records.
+- Privileged-access evidence must be retained according to the security and compliance retention policy.
+- Sensitive case descriptions and attachments must have restricted access.
+- All timestamps must use UTC.
+
+**Design Notes and Open Decisions**
+
+- The system must define the exact approval matrix for different privileged operations.
+- A separate `privileged_access_grant` table will likely be required to record approved temporary access.
+- A separate `platform_support_case_history` table may be required for immutable case lifecycle history.
+- The system must define emergency access duration and notification requirements.
+- The system must determine whether approval requires one or two independent platform administrators.
+- The system must define whether firms can view all case details or only customer-facing updates.
+- The system must define support case retention and archival policies.
+- The system must establish how support cases connect to `support_ticket`, `privileged_access_event`, `platform_audit_event` and `platform_security_event`.
+
+### 3.83 `audit_event`
+
+**Purpose**
+
+The `audit_event` table stores an immutable record of significant business, administrative, financial and security-relevant operations performed within a CA firm's tenant.
+
+It provides evidence of who performed an action, what operation occurred, which business record was affected, when it happened and whether the operation succeeded.
+
+Examples include:
+
+- Customer creation, modification and deactivation.
+- Customer PAN creation, viewing, modification and deletion.
+- ITR record creation and status changes.
+- Document upload, download, review and deletion.
+- Checklist updates and approvals.
+- Invoice creation, issue, cancellation and correction.
+- Payment receipt, allocation, reversal and refund.
+- Staff membership and role changes.
+- Customer access grant creation and revocation.
+- Financial exports and sensitive data access.
+- Changes to firm configuration and permissions.
+
+**Ownership and Tenant Scope**
+
+- Ownership: Firm-Owned.
+- Tenant scope: Strictly firm-specific.
+- Tenant identifier: `firm_id`.
+- Mandatory PostgreSQL Row-Level Security (RLS).
+- Every firm-level audit event must belong to exactly one firm.
+- Firm administrators may retrieve authorized audit records belonging to their firm.
+- Firm staff may access audit information only when explicitly permitted.
+- Customers must not access internal firm audit records.
+- Platform administrators must use separately authorized platform-level audit access.
+- Audit records must be append-only.
+
+**Proposed Columns**
+
+| Column | Data Type | Nullable | Description |
+|---|---|---|---|
+| `id` | UUID | No | Primary key |
+| `firm_id` | UUID | No | Tenant identifier |
+| `actor_type` | VARCHAR(30) | No | Actor classification |
+| `actor_user_id` | UUID | Yes | User who performed the operation |
+| `actor_membership_id` | UUID | Yes | Firm membership associated with the actor |
+| `actor_customer_id` | UUID | Yes | Customer identity associated with the actor |
+| `event_category` | VARCHAR(50) | No | Audit event category |
+| `event_type` | VARCHAR(100) | No | Specific event |
+| `operation` | VARCHAR(50) | No | Operation performed |
+| `target_entity_type` | VARCHAR(100) | Yes | Affected entity type |
+| `target_entity_id` | UUID | Yes | Affected record identifier |
+| `event_description` | TEXT | Yes | Human-readable description |
+| `event_data` | JSONB | No | Structured event metadata |
+| `outcome` | VARCHAR(30) | No | Operation result |
+| `ip_address` | INET | Yes | Originating IP address |
+| `user_agent` | TEXT | Yes | Client information |
+| `correlation_id` | UUID | Yes | Related request or workflow |
+| `occurred_at` | TIMESTAMPTZ | No | Time the event occurred |
+| `created_at` | TIMESTAMPTZ | No | Time the audit record was persisted |
+
+**Primary Key and Foreign Keys**
+
+- Primary key: `id`.
+- `firm_id` references `firm.id`.
+- `(firm_id, actor_membership_id)` references `firm_membership` through a same-firm composite foreign key.
+- `actor_user_id` references `user.id`.
+- `actor_customer_id` references `customer.id`.
+
+Actor attribution must follow an explicit actor model:
+
+- `firm_user`: requires a valid user and firm membership belonging to the same firm.
+- `customer`: requires a valid customer identity and an authorized relationship with the firm.
+- `system`: identifies an approved system process or service.
+- `platform_user`: requires a separately authorized platform actor and must be used only for approved platform-originated operations affecting the firm.
+
+The actor type must be consistent with the populated actor references. The design must prevent ambiguous or contradictory actor attribution.
+
+**Event Categories**
+
+Initial supported values:
+
+- `authentication`
+- `authorization`
+- `customer_management`
+- `itr_management`
+- `document_management`
+- `checklist_management`
+- `communication`
+- `financial`
+- `refund`
+- `membership`
+- `role_management`
+- `configuration`
+- `data_import`
+- `data_export`
+- `subscription`
+- `support`
+- `security`
+- `system`
+- `other`
+
+**Operations**
+
+Initial supported values:
+
+- `create`
+- `view`
+- `update`
+- `delete`
+- `download`
+- `upload`
+- `approve`
+- `reject`
+- `assign`
+- `revoke`
+- `export`
+- `login`
+- `logout`
+- `permission_change`
+- `status_change`
+- `other`
+
+**Outcome Values**
+
+- `success`
+- `failure`
+- `denied`
+- `pending`
+
+**Constraints and Data Integrity**
+
+- `firm_id`, actor type, event category, event type, operation, outcome and timestamps must be populated.
+- `event_data` must be a valid JSON object.
+- Event type and operation values must be non-empty and follow the approved event catalogue.
+- Actor references must be consistent with the actor type.
+- Firm-user membership references must belong to the same firm.
+- Customer actors must have an authorized relationship with the firm at the time of the operation.
+- Failed and denied operations must be recorded wherever sufficient trusted context exists.
+- Events must not be silently overwritten or deleted.
+- Corrections must be represented through additional audit events.
+- Event identifiers and correlation identifiers must support reliable traceability and idempotency.
+
+**Indexes**
+
+Proposed indexes:
+
+- Index on `(firm_id, occurred_at DESC)`.
+- Index on `(firm_id, actor_type, occurred_at DESC)`.
+- Index on `(firm_id, actor_membership_id, occurred_at DESC)`.
+- Index on `(firm_id, actor_customer_id, occurred_at DESC)`.
+- Index on `(firm_id, event_category, occurred_at DESC)`.
+- Index on `(firm_id, event_type, occurred_at DESC)`.
+- Index on `(firm_id, target_entity_type, target_entity_id)`.
+- Index on `(firm_id, correlation_id)`.
+- Index on `(firm_id, outcome, occurred_at DESC)`.
+
+**Tenant Isolation and RLS**
+
+- Every event must have a valid `firm_id`.
+- RLS must restrict retrieval to the current authorized firm.
+- Firm context must be established transactionally for every database operation.
+- Cross-firm references must be rejected.
+- Platform-wide audit events must be stored separately in `platform_audit_event`.
+- Firm users must not access another firm's audit records.
+- Audit retrieval and export operations must themselves be audited.
+- The application runtime must not have unrestricted access to other tenants' audit data.
+
+**Business and Security Rules**
+
+- Audit records must be generated by trusted backend services, not directly by client-supplied event payloads.
+- Audit events must be recorded for security-sensitive and financially significant operations.
+- Sensitive identifier viewing, including PAN reveal, must be auditable.
+- Document downloads and sensitive exports must generate audit evidence.
+- Role, permission and access-grant changes must be recorded.
+- Failed authorization attempts must be logged where safely possible.
+- Audit records must not contain passwords, OTPs, session tokens, recovery codes, encryption keys or unnecessary personal/tax information.
+- Sensitive metadata must be masked or minimized.
+- Application users must not be able to modify or delete audit records.
+- Database permissions must enforce append-only behavior.
+- Audit retrieval must be restricted and monitored.
+- High-value audit evidence should be periodically copied to independently protected storage.
+
+**Data Integrity and Lifecycle**
+
+- Audit events must be persisted in the same transaction as the relevant business operation whenever practical and necessary for consistency.
+- Failed operations must be recorded through a reliable separate mechanism when the original transaction rolls back.
+- Event timestamps must use UTC.
+- Audit records must remain available for the approved retention period.
+- Retention and archival must comply with applicable legal and contractual requirements.
+- Audit records must not be removed merely because a related business record is soft-deleted.
+- High-volume audit data may require time-based partitioning.
+- Database backups and independent audit archives must be included in recovery planning.
+
+**Design Notes and Open Decisions**
+
+- The system must finalize the actor model, particularly system and platform-originated actions.
+- The exact event catalogue must be maintained centrally.
+- The system must determine which read operations require mandatory audit records.
+- The system must define retention periods by event category.
+- The system must decide whether audit events are partitioned monthly or quarterly.
+- The system must define tamper-resistant external audit storage and integrity verification.
+- The system must define audit-event idempotency and duplicate prevention.
+- The system must determine whether business audit records and security-event records share any common event infrastructure.
+- The system must establish how audit export and privileged audit access are approved and recorded.
+
+### 3.84 `security_event`
+
+**Purpose**
+
+The `security_event` table stores security-relevant events detected within a CA firm's tenant.
+
+It supports security monitoring, investigation, incident response and detection of suspicious activity.
+
+Examples include:
+
+- Repeated failed login attempts.
+- Suspicious authentication patterns.
+- Unauthorized access attempts.
+- Customer or staff account lockouts.
+- Unusual document download activity.
+- Repeated access-denied events.
+- Suspicious customer data exports.
+- MFA verification failures.
+- Potential session hijacking.
+- Attempts to access another firm's resources.
+
+**Ownership and Tenant Scope**
+
+- Ownership: Firm-Owned.
+- Tenant scope: Firm-specific.
+- Tenant identifier: `firm_id`.
+- Mandatory PostgreSQL RLS.
+- Every firm-attributable security event must belong to one firm.
+- Firm administrators may view authorized security events belonging to their firm.
+- Firm staff access must be restricted to explicitly authorized security permissions.
+- Customers must not access internal security-event records.
+- Platform-wide events must be recorded separately in `platform_security_event`.
+- Security events must be append-only.
+
+**Proposed Columns**
+
+| Column | Data Type | Nullable | Description |
+|---|---|---|---|
+| `id` | UUID | No | Primary key |
+| `firm_id` | UUID | No | Associated firm |
+| `event_type` | VARCHAR(100) | No | Security event classification |
+| `event_category` | VARCHAR(50) | No | Security event category |
+| `severity` | VARCHAR(20) | No | Risk severity |
+| `event_status` | VARCHAR(30) | No | Investigation status |
+| `actor_user_id` | UUID | Yes | Associated user |
+| `actor_membership_id` | UUID | Yes | Associated firm membership |
+| `actor_customer_id` | UUID | Yes | Associated customer identity |
+| `affected_user_id` | UUID | Yes | User affected by the event |
+| `affected_entity_type` | VARCHAR(100) | Yes | Affected entity type |
+| `affected_entity_id` | UUID | Yes | Affected entity identifier |
+| `ip_address` | INET | Yes | Source IP address |
+| `user_agent` | TEXT | Yes | Client information |
+| `event_description` | TEXT | No | Security event description |
+| `event_data` | JSONB | No | Structured event metadata |
+| `detection_source` | VARCHAR(50) | No | Event detection mechanism |
+| `correlation_id` | UUID | Yes | Related operation identifier |
+| `detected_at` | TIMESTAMPTZ | No | Detection timestamp |
+| `created_at` | TIMESTAMPTZ | No | Record creation timestamp |
+
+**Primary Key and Foreign Keys**
+
+- Primary key: `id`.
+- `firm_id` references `firm.id`.
+- `(firm_id, actor_membership_id)` references `firm_membership` through a same-firm composite foreign key.
+- `actor_user_id` references `user.id`.
+- `actor_customer_id` references `customer.id`.
+- `affected_user_id` references `user.id`.
+
+Actor attribution must distinguish firm users, customers, system processes and unknown external actors.
+
+Events originating from an unauthenticated request must still be recordable without inventing a user identity.
+
+**Event Categories**
+
+Initial supported values:
+
+- `authentication`
+- `authorization`
+- `account_security`
+- `session_security`
+- `mfa_security`
+- `data_access`
+- `document_security`
+- `data_export`
+- `tenant_isolation`
+- `configuration_security`
+- `suspicious_activity`
+- `other`
+
+**Example Event Types**
+
+- `repeated_login_failures`
+- `invalid_password_attempt`
+- `mfa_verification_failure`
+- `account_locked`
+- `session_revoked`
+- `suspicious_session_activity`
+- `unauthorized_resource_access`
+- `cross_tenant_access_attempt`
+- `suspicious_document_download`
+- `sensitive_data_export`
+- `privilege_escalation_attempt`
+- `account_recovery_attempt`
+- `suspicious_activity_detected`
+
+**Severity Values**
+
+- `info`
+- `low`
+- `medium`
+- `high`
+- `critical`
+
+**Event Statuses**
+
+- `new`
+- `under_investigation`
+- `confirmed`
+- `false_positive`
+- `resolved`
+- `closed`
+
+**Constraints and Data Integrity**
+
+- Event type, category, severity and detection source must use approved values.
+- Event description must not be empty.
+- `event_data` must be a valid JSON object.
+- Actor references must be consistent with the event's origin.
+- Firm membership references must belong to the same firm.
+- Security events must preserve their original detection timestamp.
+- Event status changes must be recorded in a separate immutable investigation history.
+- Security event records must not be silently modified or deleted.
+- Unknown actors must remain distinguishable from system-generated events.
+
+**Indexes**
+
+Proposed indexes:
+
+- Index on `(firm_id, detected_at DESC)`.
+- Index on `(firm_id, severity, detected_at DESC)`.
+- Index on `(firm_id, event_category, detected_at DESC)`.
+- Index on `(firm_id, event_type, detected_at DESC)`.
+- Index on `(firm_id, event_status, detected_at DESC)`.
+- Index on `(firm_id, actor_user_id, detected_at DESC)`.
+- Index on `(firm_id, affected_user_id, detected_at DESC)`.
+- Index on `(firm_id, ip_address, detected_at DESC)`.
+- Index on `(firm_id, correlation_id)`.
+
+**Tenant Isolation and RLS**
+
+- Every firm-attributable event must have a valid `firm_id`.
+- RLS must restrict firm-level access to the current tenant.
+- Security monitoring services must establish the correct firm context.
+- Cross-tenant access attempts must be attributable to the target firm where safely possible.
+- A firm must not be able to inspect security events belonging to another firm.
+- Platform-wide security events must be stored separately.
+- Security-event retrieval must require explicit authorization and be audited.
+
+**Business and Security Rules**
+
+- Security events must be generated by trusted authentication, authorization and monitoring services.
+- Repeated failures and suspicious patterns should trigger appropriate detection rules.
+- Critical security events must generate alerts to authorized personnel.
+- Security-event records must not include passwords, OTPs, access tokens, recovery codes or encryption secrets.
+- Sensitive values must be masked or excluded.
+- Event detection must not rely solely on client-supplied information.
+- Security investigation must preserve the original event.
+- Confirmed incidents must follow the organization's incident-response process.
+- Security events must not automatically grant access to affected customer data.
+- Automated detection and response must be controlled and auditable.
+
+**Data Integrity and Lifecycle**
+
+- Event creation must be reliable even when the triggering business operation fails.
+- Security records must be append-only.
+- Investigation status and resolution details must be maintained separately from original event data.
+- Timestamps must use UTC.
+- High-volume event data may require time-based partitioning.
+- Retention and archival must follow the approved security and legal retention policy.
+- Security-event storage must be included in backup and recovery planning.
+
+**Design Notes and Open Decisions**
+
+- The system must define security-event detection thresholds.
+- The system must define severity classification rules.
+- A separate `security_event_history` table may be required for investigation updates.
+- The system must determine which events require immediate alerts.
+- The system must define event correlation and deduplication strategies.
+- The system must determine whether automated account suspension or session revocation is appropriate for particular event types.
+- The system must define security-event retention and archival periods.
+- The system must establish how security events relate to `audit_event`, `platform_security_event` and incident-response workflows.
+
+### 3.85 `platform_security_event`
+
+**Purpose**
+
+The `platform_security_event` table records security-related events affecting the overall ITR Management SaaS platform.
+
+It supports platform-level security monitoring, incident investigation, threat detection and response.
+
+Examples include:
+
+- Suspicious platform administrator login attempts.
+- Repeated failed platform authentication.
+- Attempts to bypass platform-level authorization.
+- Unauthorized access to platform administration functions.
+- Suspicious tenant provisioning or suspension activity.
+- Platform-wide configuration tampering attempts.
+- Privileged account compromise indicators.
+- Attempts to access multiple firms without authorization.
+- Infrastructure or integration security incidents.
+- Suspected platform-wide data exposure.
+
+**Ownership and Tenant Scope**
+
+- Ownership: Platform-Owned.
+- Tenant scope: Global platform scope.
+- Tenant identifier: No mandatory `firm_id`.
+- Platform-level restricted access policy.
+- This table must not use ordinary firm-level RLS.
+- Access must be restricted to specifically authorized platform security personnel.
+- Firm administrators and ordinary firm users must not access platform security events.
+- A firm identifier may be recorded as contextual information when an event relates to a particular firm.
+- Platform security records must be append-only.
+
+**Proposed Columns**
+
+| Column | Data Type | Nullable | Description |
+|---|---|---|---|
+| `id` | UUID | No | Primary key |
+| `event_type` | VARCHAR(100) | No | Security event classification |
+| `event_category` | VARCHAR(50) | No | Security event category |
+| `severity` | VARCHAR(20) | No | Risk severity |
+| `event_status` | VARCHAR(30) | No | Investigation status |
+| `actor_type` | VARCHAR(30) | No | Actor classification |
+| `actor_user_id` | UUID | Yes | Associated central user |
+| `actor_platform_user_id` | UUID | Yes | Associated platform administrator |
+| `affected_firm_id` | UUID | Yes | Related firm, if applicable |
+| `affected_entity_type` | VARCHAR(100) | Yes | Affected entity type |
+| `affected_entity_id` | UUID | Yes | Affected entity identifier |
+| `ip_address` | INET | Yes | Source IP address |
+| `user_agent` | TEXT | Yes | Client information |
+| `event_description` | TEXT | No | Security event description |
+| `event_data` | JSONB | No | Structured event metadata |
+| `detection_source` | VARCHAR(50) | No | Event detection mechanism |
+| `correlation_id` | UUID | Yes | Related operation identifier |
+| `detected_at` | TIMESTAMPTZ | No | Detection timestamp |
+| `created_at` | TIMESTAMPTZ | No | Record creation timestamp |
+
+**Primary Key and Foreign Keys**
+
+- Primary key: `id`.
+- `actor_user_id` references `user.id`.
+- `actor_platform_user_id` references `platform_user.id`.
+- `affected_firm_id` references `firm.id`.
+
+Actor attribution must distinguish:
+
+- `platform_user`: authenticated platform administrator.
+- `firm_user`: user associated with a firm.
+- `customer`: customer identity.
+- `system`: trusted platform process.
+- `external`: unidentified or unauthenticated external actor.
+
+The actor type must be consistent with the available actor references.
+
+Unknown external actors must be recordable without requiring an existing user record.
+
+**Event Categories**
+
+Initial supported values:
+
+- `platform_authentication`
+- `platform_authorization`
+- `platform_account_security`
+- `privileged_access`
+- `tenant_isolation`
+- `platform_configuration`
+- `infrastructure_security`
+- `integration_security`
+- `data_protection`
+- `suspicious_activity`
+- `incident_response`
+- `other`
+
+**Example Event Types**
+
+- `platform_login_failure`
+- `platform_admin_account_locked`
+- `platform_mfa_failure`
+- `privileged_access_attempt`
+- `unauthorized_platform_operation`
+- `cross_tenant_access_attempt`
+- `tenant_provisioning_anomaly`
+- `platform_configuration_tampering`
+- `suspicious_admin_activity`
+- `platform_data_exposure_suspected`
+- `integration_credential_compromise`
+- `infrastructure_security_alert`
+
+**Severity Values**
+
+- `info`
+- `low`
+- `medium`
+- `high`
+- `critical`
+
+**Event Statuses**
+
+- `new`
+- `under_investigation`
+- `confirmed`
+- `false_positive`
+- `resolved`
+- `closed`
+
+**Constraints and Data Integrity**
+
+- Event type, category, severity, actor type and detection source must use approved values.
+- Event description must not be empty.
+- `event_data` must be a valid JSON object.
+- Actor references must be consistent with actor type.
+- `affected_firm_id`, when supplied, must reference an existing firm.
+- Platform security events must not depend on successful user authentication.
+- Original detection details and timestamps must remain immutable.
+- Investigation updates must be recorded separately.
+- Duplicate events must be managed through a controlled event-correlation or deduplication mechanism.
+
+**Indexes**
+
+Proposed indexes:
+
+- Index on `(detected_at DESC)`.
+- Index on `(severity, detected_at DESC)`.
+- Index on `(event_category, detected_at DESC)`.
+- Index on `(event_type, detected_at DESC)`.
+- Index on `(event_status, detected_at DESC)`.
+- Index on `(actor_platform_user_id, detected_at DESC)`.
+- Index on `(actor_user_id, detected_at DESC)`.
+- Index on `(affected_firm_id, detected_at DESC)`.
+- Index on `(ip_address, detected_at DESC)`.
+- Index on `correlation_id`.
+
+**Platform-Level Access Control**
+
+- Access must be restricted to authorized platform security roles.
+- Platform administrators without security permissions must not automatically receive unrestricted access.
+- Security-event retrieval and exports must be audited.
+- Database permissions must prevent ordinary application roles from modifying or deleting security records.
+- Platform-level RLS or equivalent restricted database policies must be evaluated separately from firm-level RLS.
+- Emergency access must follow the approved privileged-access procedure.
+
+**Business and Security Rules**
+
+- Events must be generated by trusted platform authentication, authorization, monitoring and infrastructure services.
+- Critical events must trigger appropriate alerts.
+- Cross-tenant access attempts must be recorded even when authorization denies the operation.
+- Platform administrator activity must be monitored.
+- Sensitive configuration values, passwords, tokens, encryption keys and recovery codes must never be stored in event payloads.
+- Security investigations must preserve original event evidence.
+- Confirmed incidents must follow a documented incident-response process.
+- Platform security records must not be exposed through firm-facing APIs.
+- Automated responses must be authorized, controlled and auditable.
+
+**Data Integrity and Lifecycle**
+
+- Security-event creation must be reliable even when the triggering operation fails.
+- Original event records must be append-only.
+- Investigation status changes must be separately recorded.
+- Timestamps must use UTC.
+- High-volume records may require time-based partitioning.
+- Security records must be protected through backup and recovery procedures.
+- Retention and archival must follow the approved security and legal retention policy.
+- Critical evidence may require independent tamper-resistant storage.
+
+**Design Notes and Open Decisions**
+
+- The system must define platform security event detection rules and severity thresholds.
+- A separate `platform_security_event_history` table may be required.
+- The system must define alerting and escalation rules for critical events.
+- The system must define event correlation and deduplication.
+- The system must decide whether security incidents require a separate incident-management entity.
+- The system must define retention, archival and tamper-resistance requirements.
+- The system must establish the relationship between platform security events, platform audit events and privileged access records.
+- The system must define the precise database policy for platform-level security records.
+
+### 3.86 `privileged_access_event`
+
+**Purpose**
+
+The `privileged_access_event` table records privileged access to sensitive tenant resources by platform administrators or other specially authorized personnel.
+
+It provides traceability for exceptional access granted during support investigations, production troubleshooting, security incidents and approved administrative operations.
+
+Examples include:
+
+- Temporary access to a firm's customer records.
+- Approved inspection of sensitive tax information.
+- Access to a firm's documents for troubleshooting.
+- Exceptional production database investigation.
+- Emergency access during a security incident.
+- Privileged data export for an approved investigation.
+- Revocation or expiry of temporary access.
+
+This table records privileged-access activity. It does not itself grant access or replace authorization controls.
+
+**Ownership and Tenant Scope**
+
+- Ownership: Platform-Owned, with an explicit firm relationship.
+- Tenant scope: Firm-associated and platform-controlled.
+- Tenant identifier: `firm_id`.
+- Platform-level restricted access policy.
+- No ordinary firm-level RLS access.
+- Firm administrators may view approved summaries relating to their own firm where policy permits.
+- Only authorized platform security and compliance personnel may retrieve complete privileged-access evidence.
+- Every privileged operation must be linked to an approved support case or authorized emergency procedure.
+- Records must be append-only.
+
+**Proposed Columns**
+
+| Column | Data Type | Nullable | Description |
+|---|---|---|---|
+| `id` | UUID | No | Primary key |
+| `firm_id` | UUID | No | Firm whose resources are accessed |
+| `platform_support_case_id` | UUID | Yes | Related approved support case |
+| `platform_user_id` | UUID | No | Platform administrator performing the action |
+| `access_grant_reference` | UUID | No | Identifier of the associated access grant |
+| `access_type` | VARCHAR(50) | No | Type of privileged access |
+| `resource_type` | VARCHAR(100) | No | Accessed resource classification |
+| `resource_id` | UUID | Yes | Specific resource identifier |
+| `access_action` | VARCHAR(50) | No | Operation performed |
+| `access_purpose` | TEXT | No | Business justification |
+| `approval_status` | VARCHAR(30) | No | Approval state |
+| `access_result` | VARCHAR(30) | No | Operation result |
+| `ip_address` | INET | Yes | Originating IP address |
+| `user_agent` | TEXT | Yes | Client information |
+| `correlation_id` | UUID | Yes | Related operation identifier |
+| `occurred_at` | TIMESTAMPTZ | No | Time of privileged action |
+| `created_at` | TIMESTAMPTZ | No | Record persistence timestamp |
+
+**Primary Key and Foreign Keys**
+
+- Primary key: `id`.
+- `firm_id` references `firm.id`.
+- `platform_support_case_id` references `platform_support_case.id`.
+- `platform_user_id` references `platform_user.id`.
+
+A separate `privileged_access_grant` table must be introduced to manage the actual authorization grant.
+
+The access grant must identify:
+
+- The authorized platform administrator.
+- The affected firm.
+- The approved support case or emergency justification.
+- The permitted resource scope.
+- The permitted operations.
+- The approval authority.
+- The grant start and expiry times.
+- The revocation status.
+
+The `access_grant_reference` must reference a valid grant. The database design must finalize its foreign key once the grant table is defined.
+
+**Access Types**
+
+Initial supported values:
+
+- `read_only`
+- `sensitive_data_read`
+- `document_access`
+- `data_export`
+- `configuration_access`
+- `administrative_operation`
+- `emergency_access`
+
+**Resource Types**
+
+Initial supported values:
+
+- `customer`
+- `customer_tax_identity`
+- `customer_itr`
+- `document`
+- `financial_record`
+- `firm_configuration`
+- `membership`
+- `audit_record`
+- `other`
+
+**Access Actions**
+
+- `view`
+- `read`
+- `download`
+- `export`
+- `update`
+- `approve`
+- `revoke`
+- `other`
+
+**Approval Statuses**
+
+- `approved`
+- `emergency_authorized`
+- `denied`
+
+**Access Results**
+
+- `success`
+- `denied`
+- `failure`
+
+**Constraints and Data Integrity**
+
+- Every event must identify the affected firm and acting platform administrator.
+- Access purpose must not be empty.
+- Access type, resource type, action, approval status and result must use approved values.
+- The access grant must belong to the same firm and platform administrator.
+- The support case, when supplied, must belong to the same firm.
+- The requested action must fall within the approved grant scope.
+- Access outside the approved time window must be denied.
+- Expired or revoked grants must not authorize further operations.
+- Emergency access must have an identifiable emergency justification.
+- Failed and denied privileged-access attempts must be recorded.
+- Event records must not be modified or deleted.
+
+**Indexes**
+
+Proposed indexes:
+
+- Index on `(firm_id, occurred_at DESC)`.
+- Index on `(platform_user_id, occurred_at DESC)`.
+- Index on `(access_grant_reference, occurred_at DESC)`.
+- Index on `(platform_support_case_id, occurred_at DESC)`.
+- Index on `(firm_id, resource_type, resource_id)`.
+- Index on `(firm_id, access_action, occurred_at DESC)`.
+- Index on `(approval_status, occurred_at DESC)`.
+- Index on `(access_result, occurred_at DESC)`.
+- Index on `correlation_id`.
+
+**Privileged Access Control**
+
+- A privileged-access event must never independently authorize an operation.
+- The backend must validate an active grant before each privileged action.
+- Grant scope must be limited to the approved firm, resource and permitted actions.
+- Access must be time-limited and automatically expire.
+- Approval must be independent of the operator for sensitive production-data access.
+- Emergency access must generate immediate alerts and receive retrospective review.
+- Access revocation must take effect promptly.
+- All sensitive reads, modifications and exports must be recorded.
+- Platform administrators must not use privileged access to bypass tenant isolation.
+- Privileged actions must be associated with a support case or documented emergency authorization.
+
+**Tenant Isolation and Security Rules**
+
+- Every privileged event must identify the firm whose data or resources are involved.
+- Cross-firm access must be denied unless separately authorized through an explicitly approved process.
+- Platform support access must not create a permanent tenant membership.
+- Firm-level RLS must remain enforced for normal application operations.
+- Any exceptional access mechanism must use a narrowly scoped and controlled database authorization path.
+- Sensitive tax identifiers must not be copied into event descriptions or metadata.
+- Passwords, OTPs, access tokens, encryption keys and other secrets must never be recorded.
+- Retrieval of privileged-access evidence must itself be audited.
+- Database permissions must prevent unauthorized modification or deletion.
+
+**Data Integrity and Lifecycle**
+
+- Privileged-access events must be recorded through trusted backend services.
+- Event creation must be reliable even when the privileged operation fails.
+- Grant creation, approval, revocation and expiry must be traceable.
+- Original event timestamps and actor information must remain immutable.
+- All timestamps must use UTC.
+- Records must follow the approved security and compliance retention policy.
+- High-value privileged-access evidence should be copied to independently protected storage.
+- Backup and recovery procedures must include privileged-access evidence.
+
+**Design Notes and Open Decisions**
+
+- The separate `privileged_access_grant` table must be fully specified.
+- The exact approval matrix must be finalized.
+- The system must define the maximum access-grant duration.
+- Emergency access authorization and retrospective review procedures must be defined.
+- The system must decide whether privileged access requires two-person approval.
+- The exact resource and operation catalogue must be maintained centrally.
+- The system must define whether sensitive reads require individual event records or controlled aggregation.
+- The system must define alerting for unusual privileged-access patterns.
+- The relationship between this table, `platform_support_case`, `platform_audit_event` and `platform_security_event` must be finalized.
+- Retention, archival and tamper-resistant evidence requirements must be established.
+
+### 3.87 `background_job_execution`
+
+**Purpose**
+
+The `background_job_execution` table stores execution records for asynchronous background jobs processed by the ITR Management System.
+
+It provides operational visibility into job execution, processing attempts, failures, retries and completion.
+
+Examples include:
+
+- Excel customer data imports.
+- Document malware scanning.
+- Report generation.
+- Data exports.
+- Email and SMS notification processing.
+- Invoice and payment reconciliation.
+- Refund status synchronization.
+- Checklist generation.
+- Subscription usage calculations.
+- Background data maintenance.
+- Automated workflow processing.
+
+This table records execution history and operational metadata. It is not itself the job queue or the authoritative business record.
+
+**Ownership and Tenant Scope**
+
+- Ownership: System-Owned, with an optional firm relationship.
+- Tenant scope: Firm-associated or platform-wide.
+- Tenant identifier: `firm_id`, nullable for platform-wide jobs.
+- Firm-associated records must be protected by tenant-aware RLS.
+- Platform-wide job records require separately restricted platform-level access.
+- Workers must establish the correct tenant context before processing firm-specific jobs.
+- Job execution records must be retained according to operational and audit requirements.
+
+**Proposed Columns**
+
+| Column | Data Type | Nullable | Description |
+|---|---|---|---|
+| `id` | UUID | No | Primary key |
+| `firm_id` | UUID | Yes | Associated firm |
+| `job_reference` | VARCHAR(150) | No | Unique job reference |
+| `job_type` | VARCHAR(100) | No | Job classification |
+| `job_name` | VARCHAR(255) | No | Human-readable job name |
+| `job_queue` | VARCHAR(100) | No | Processing queue |
+| `job_status` | VARCHAR(30) | No | Current execution status |
+| `job_priority` | VARCHAR(20) | No | Processing priority |
+| `job_payload` | JSONB | No | Validated job metadata |
+| `job_result` | JSONB | Yes | Processing result metadata |
+| `idempotency_key` | VARCHAR(255) | Yes | Duplicate execution protection |
+| `correlation_id` | UUID | Yes | Related workflow identifier |
+| `parent_job_id` | UUID | Yes | Parent job reference |
+| `attempt_number` | INTEGER | No | Current attempt number |
+| `maximum_attempts` | INTEGER | No | Maximum permitted attempts |
+| `worker_identifier` | VARCHAR(150) | Yes | Worker processing the job |
+| `requested_by_user_id` | UUID | Yes | Requesting user |
+| `requested_by_membership_id` | UUID | Yes | Requesting firm membership |
+| `started_at` | TIMESTAMPTZ | Yes | Execution start |
+| `completed_at` | TIMESTAMPTZ | Yes | Execution completion |
+| `failed_at` | TIMESTAMPTZ | Yes | Failure timestamp |
+| `next_retry_at` | TIMESTAMPTZ | Yes | Scheduled retry time |
+| `execution_duration_ms` | BIGINT | Yes | Execution duration |
+| `error_code` | VARCHAR(100) | Yes | Structured failure code |
+| `error_summary` | TEXT | Yes | Sanitized failure summary |
+| `created_at` | TIMESTAMPTZ | No | Record creation timestamp |
+| `updated_at` | TIMESTAMPTZ | No | Last update timestamp |
+
+**Primary Key and Foreign Keys**
+
+- Primary key: `id`.
+- `firm_id` references `firm.id`, when applicable.
+- `parent_job_id` references `background_job_execution.id`.
+- `requested_by_user_id` references `user.id`.
+- `(firm_id, requested_by_membership_id)` references `firm_membership` through a same-firm composite foreign key.
+
+For firm-associated jobs, the requesting membership must belong to the same firm.
+
+Platform-wide jobs must use a separately validated platform or system actor representation.
+
+**Example Job Types**
+
+- `customer_import`
+- `document_scan`
+- `report_generation`
+- `data_export`
+- `notification_delivery`
+- `payment_reconciliation`
+- `refund_synchronization`
+- `checklist_generation`
+- `subscription_usage_calculation`
+- `workflow_processing`
+- `data_maintenance`
+- `other`
+
+**Job Statuses**
+
+- `queued`
+- `scheduled`
+- `processing`
+- `completed`
+- `completed_with_warnings`
+- `failed`
+- `retry_scheduled`
+- `cancelled`
+- `dead_letter`
+
+**Job Priorities**
+
+- `low`
+- `normal`
+- `high`
+- `urgent`
+
+**Constraints and Data Integrity**
+
+- Job reference must be unique.
+- Job type, queue, status and priority must use approved values.
+- `job_payload` and `job_result`, when supplied, must be valid JSON objects.
+- Attempt number must be nonnegative.
+- Maximum attempts must be positive.
+- Attempt number must not exceed the permitted execution policy.
+- Execution timestamps must follow a valid lifecycle.
+- Completion and failure states must have corresponding timestamps.
+- Execution duration must be nonnegative.
+- Parent job references must not create circular relationships.
+- Idempotency keys must be unique within their defined scope.
+- Failed jobs must retain sanitized failure information.
+- Job payloads must not contain plaintext passwords, OTPs, session tokens or encryption secrets.
+
+**Indexes**
+
+Proposed indexes:
+
+- Unique index on `job_reference`.
+- Index on `(firm_id, job_status, created_at DESC)`.
+- Index on `(job_queue, job_status, created_at)`.
+- Index on `(job_type, job_status, created_at DESC)`.
+- Index on `(job_priority, job_status, created_at)`.
+- Index on `(next_retry_at, job_status)`.
+- Index on `(correlation_id)`.
+- Index on `(parent_job_id)`.
+- Index on `(requested_by_user_id, created_at DESC)`.
+- Partial index for jobs awaiting processing or retry.
+
+**Business and Security Rules**
+
+- Background workers must obtain jobs through the approved queue-processing mechanism.
+- The database execution record must not be treated as a replacement for the actual queue.
+- Workers must validate job type and payload before processing.
+- Firm-specific jobs must execute within the correct tenant context.
+- A worker must never reuse a previous job's tenant context.
+- Job execution must be idempotent wherever possible.
+- Retries must follow controlled retry and backoff policies.
+- Permanently failing jobs must move to a dead-letter state for investigation.
+- Job payloads must contain references rather than unnecessary copies of sensitive business data.
+- Workers must use least-privilege service identities.
+- Errors must be sanitized before storage.
+- Job execution, cancellation and retry operations must be auditable.
+- Long-running jobs must support monitoring and controlled cancellation.
+- Concurrent workers must not process the same job without an approved locking or claim mechanism.
+
+**Data Integrity and Lifecycle**
+
+- Job submission and queue publication must use a reliable transactional mechanism, preferably a transactional outbox where required.
+- Execution status updates must be consistent with the queue-processing lifecycle.
+- Failed jobs must retain sufficient evidence for troubleshooting.
+- Retry attempts must be independently traceable.
+- Completed job records must not be silently rewritten.
+- Large job outputs must be stored in private object storage rather than directly in JSONB.
+- Retention and archival must follow operational and compliance requirements.
+- All timestamps must use UTC.
+
+**Design Notes and Open Decisions**
+
+- The system must determine whether each retry updates this record or creates a separate execution-attempt record. A separate `background_job_attempt` table is recommended for complete attempt history.
+- The system must define queue names and worker responsibilities.
+- The system must establish retry counts, backoff intervals and dead-letter policies.
+- The system must define job locking, leasing and concurrency controls.
+- The system must determine whether job payloads require encryption.
+- The system must define execution timeouts and cancellation behavior.
+- The system must define job monitoring, alerting and operational dashboards.
+- The system must establish how job records relate to `scheduled_job_execution`, `subscription_event`, `import_job` and other business-process tables.
+- The system must define retention and archival policies for execution history.
+
+### 3.88 `scheduled_job_execution`
+
+**Purpose**
+
+The `scheduled_job_execution` table stores execution records for jobs initiated by a schedule or recurring automation rule.
+
+It provides traceability for scheduled operations, including execution time, outcome, failures and retries.
+
+Examples include:
+
+- Daily pending ITR reminders.
+- Upcoming filing deadline notifications.
+- Scheduled customer follow-ups.
+- Subscription renewal processing.
+- Periodic subscription usage calculations.
+- Scheduled financial reconciliation.
+- Daily or monthly report generation.
+- Expired session and temporary-data cleanup.
+- Document retention and archival processing.
+- Periodic security monitoring tasks.
+
+This table records scheduled execution history. The actual schedule definition and next-run calculation must be managed separately.
+
+**Ownership and Tenant Scope**
+
+- Ownership: System-Owned, with an optional firm relationship.
+- Tenant scope: Firm-associated or platform-wide.
+- Tenant identifier: `firm_id`, nullable for platform-wide schedules.
+- Firm-associated records must be protected through tenant-aware RLS.
+- Platform-wide records require separately restricted access policies.
+- A scheduled execution must establish the correct tenant context before processing.
+- Schedule definitions and execution records must remain distinguishable.
+
+**Proposed Columns**
+
+| Column | Data Type | Nullable | Description |
+|---|---|---|---|
+| `id` | UUID | No | Primary key |
+| `firm_id` | UUID | Yes | Associated firm |
+| `schedule_reference` | VARCHAR(150) | No | Schedule reference |
+| `scheduled_job_name` | VARCHAR(255) | No | Human-readable job name |
+| `job_type` | VARCHAR(100) | No | Scheduled job classification |
+| `schedule_type` | VARCHAR(30) | No | Scheduling method |
+| `scheduled_for` | TIMESTAMPTZ | No | Intended execution time |
+| `started_at` | TIMESTAMPTZ | Yes | Actual execution start |
+| `completed_at` | TIMESTAMPTZ | Yes | Execution completion |
+| `failed_at` | TIMESTAMPTZ | Yes | Failure timestamp |
+| `execution_status` | VARCHAR(30) | No | Execution outcome |
+| `execution_attempt` | INTEGER | No | Attempt number |
+| `maximum_attempts` | INTEGER | No | Maximum permitted attempts |
+| `timezone_name` | VARCHAR(100) | Yes | Schedule's configured timezone |
+| `schedule_configuration` | JSONB | No | Validated schedule metadata |
+| `execution_result` | JSONB | Yes | Execution result metadata |
+| `error_code` | VARCHAR(100) | Yes | Structured failure code |
+| `error_summary` | TEXT | Yes | Sanitized failure description |
+| `background_job_execution_id` | UUID | Yes | Related background job |
+| `correlation_id` | UUID | Yes | Related workflow identifier |
+| `created_at` | TIMESTAMPTZ | No | Record creation timestamp |
+| `updated_at` | TIMESTAMPTZ | No | Last update timestamp |
+
+**Primary Key and Foreign Keys**
+
+- Primary key: `id`.
+- `firm_id` references `firm.id`, when applicable.
+- `background_job_execution_id` references `background_job_execution.id`.
+
+The referenced background job must have the same tenant scope.
+
+Platform-wide scheduled executions must not reference firm-specific background jobs unless an explicitly authorized platform workflow requires it.
+
+**Schedule Types**
+
+Initial supported values:
+
+- `one_time`
+- `recurring`
+- `cron_based`
+- `event_triggered`
+- `system_maintenance`
+
+**Job Types**
+
+Initial supported values:
+
+- `itr_reminder`
+- `filing_deadline_notification`
+- `customer_follow_up`
+- `subscription_renewal`
+- `subscription_usage_calculation`
+- `financial_reconciliation`
+- `report_generation`
+- `session_cleanup`
+- `temporary_file_cleanup`
+- `document_archival`
+- `security_monitoring`
+- `other`
+
+**Execution Statuses**
+
+- `scheduled`
+- `queued`
+- `processing`
+- `completed`
+- `completed_with_warnings`
+- `failed`
+- `retry_scheduled`
+- `skipped`
+- `cancelled`
+- `missed`
+
+**Constraints and Data Integrity**
+
+- Schedule reference must be valid and traceable.
+- Job type, schedule type and execution status must use approved values.
+- `schedule_configuration` and `execution_result`, when supplied, must be valid JSON objects.
+- Execution attempt must be nonnegative.
+- Maximum attempts must be positive.
+- Completion and failure timestamps must match the execution lifecycle.
+- The associated background job must belong to the same tenant scope.
+- Duplicate execution of the same scheduled occurrence must be prevented through an idempotency mechanism.
+- Schedule time and timezone must be interpreted consistently.
+- Execution results must not contain secrets or unnecessary sensitive data.
+
+**Indexes**
+
+Proposed indexes:
+
+- Index on `(firm_id, scheduled_for)`.
+- Index on `(execution_status, scheduled_for)`.
+- Index on `(firm_id, job_type, scheduled_for DESC)`.
+- Index on `(schedule_reference, scheduled_for DESC)`.
+- Index on `(background_job_execution_id)`.
+- Index on `(correlation_id)`.
+- Partial index for scheduled and retry-pending executions.
+
+**Business and Security Rules**
+
+- Only approved schedule definitions may initiate scheduled executions.
+- Scheduled execution must use the configured schedule and timezone.
+- Firm-specific schedules must execute within the correct tenant context.
+- Platform-wide schedules must use authorized system identities.
+- Duplicate execution of a scheduled occurrence must be prevented.
+- Long-running or delayed executions must be monitored.
+- Retry policies must follow controlled backoff and failure handling.
+- Missed executions must be identifiable and handled according to the job's business rules.
+- Scheduled notifications must respect communication preferences and applicable consent requirements.
+- Filing deadline notifications must use the correct assessment year and applicable deadline configuration.
+- Scheduled subscription operations must not bypass payment or subscription authorization rules.
+- All execution attempts and administrative changes must be auditable.
+
+**Data Integrity and Lifecycle**
+
+- Every scheduled execution must retain its intended execution timestamp.
+- Actual execution timestamps must be recorded separately.
+- Schedule changes must not rewrite historical execution records.
+- Execution status must remain consistent with the related background job.
+- A retry must be traceable to the original scheduled occurrence.
+- Missed or cancelled executions must retain their original scheduling context.
+- All timestamps must use UTC, while the configured timezone must be retained where needed to interpret local schedules.
+- Retention and archival must follow operational requirements.
+
+**Design Notes and Open Decisions**
+
+- A separate `scheduled_job_definition` table is required to store recurring schedule definitions, enablement status and next execution time.
+- The system must define the supported scheduling syntax and recurrence rules.
+- The system must establish timezone and daylight-saving handling.
+- The system must define missed-execution recovery and catch-up behavior.
+- The system must determine whether retries update the same execution record or create separate attempt records.
+- The system must define how scheduled executions create `background_job_execution` records.
+- The system must define locking and concurrency controls to prevent duplicate execution.
+- The system must establish schedule ownership and authorization rules.
+- The system must define monitoring, alerting and retention policies.
+
+### 3.89 `webhook_event`
+
+**Purpose**
+
+The `webhook_event` table stores metadata and processing information for webhook events exchanged between the ITR Management System and external services.
+
+It supports reliable integration processing, event verification, idempotency, retries and troubleshooting.
+
+Examples include:
+
+- Payment gateway payment confirmations.
+- Payment failure notifications.
+- Refund status updates.
+- Email delivery and bounce notifications.
+- SMS delivery reports.
+- Authorized external integration callbacks.
+- Subscription payment events.
+- Other approved inbound or outbound webhook events.
+
+**Ownership and Tenant Scope**
+
+- Ownership: System-Owned, with an optional firm relationship.
+- Tenant scope: Platform-wide or firm-associated.
+- Tenant identifier: `firm_id`, nullable for platform-wide events.
+- Firm-associated events must be protected by tenant-aware RLS.
+- Platform-wide events require separate restricted access policies.
+- Incoming webhook processing must not trust a tenant identifier supplied by an external request without independent verification.
+- Webhook records must preserve sufficient evidence for security investigations and reliable retries.
+
+**Proposed Columns**
+
+| Column | Data Type | Nullable | Description |
+|---|---|---|---|
+| `id` | UUID | No | Primary key |
+| `firm_id` | UUID | Yes | Associated firm, if applicable |
+| `webhook_reference` | VARCHAR(150) | No | Internal webhook reference |
+| `provider_name` | VARCHAR(100) | No | External service provider |
+| `integration_type` | VARCHAR(50) | No | Integration classification |
+| `webhook_direction` | VARCHAR(20) | No | Incoming or outgoing |
+| `event_type` | VARCHAR(100) | No | Provider event classification |
+| `external_event_id` | VARCHAR(255) | Yes | Provider event identifier |
+| `idempotency_key` | VARCHAR(255) | Yes | Duplicate-processing protection |
+| `webhook_status` | VARCHAR(30) | No | Processing status |
+| `signature_status` | VARCHAR(30) | No | Signature verification outcome |
+| `payload_hash` | VARCHAR(255) | Yes | Payload integrity reference |
+| `payload_encrypted` | BYTEA | Yes | Protected payload, if retention is required |
+| `encryption_key_version` | VARCHAR(100) | Yes | Encryption key version |
+| `response_status_code` | INTEGER | Yes | HTTP response status |
+| `processing_attempts` | INTEGER | No | Number of processing attempts |
+| `received_at` | TIMESTAMPTZ | Yes | Incoming event receipt time |
+| `sent_at` | TIMESTAMPTZ | Yes | Outgoing event transmission time |
+| `processed_at` | TIMESTAMPTZ | Yes | Successful processing time |
+| `next_retry_at` | TIMESTAMPTZ | Yes | Scheduled retry time |
+| `last_error_code` | VARCHAR(100) | Yes | Structured error code |
+| `last_error_summary` | TEXT | Yes | Sanitized error description |
+| `correlation_id` | UUID | Yes | Related business operation |
+| `created_at` | TIMESTAMPTZ | No | Record creation timestamp |
+| `updated_at` | TIMESTAMPTZ | No | Last update timestamp |
+
+**Primary Key and Foreign Keys**
+
+- Primary key: `id`.
+- `firm_id` references `firm.id`, when applicable.
+
+Provider-specific business references should be maintained through the appropriate integration or business-event records rather than unrestricted polymorphic foreign keys.
+
+For example, a payment gateway callback may be linked to a corresponding `customer_payment` or `subscription_payment` through a validated integration-processing relationship.
+
+**Webhook Directions**
+
+- `incoming`
+- `outgoing`
+
+**Integration Types**
+
+- `payment_gateway`
+- `email_provider`
+- `sms_provider`
+- `authorized_external_api`
+- `other`
+
+**Webhook Statuses**
+
+- `received`
+- `signature_verification_pending`
+- `verified`
+- `processing`
+- `processed`
+- `failed`
+- `retry_scheduled`
+- `ignored`
+- `dead_letter`
+
+**Signature Verification Statuses**
+
+- `not_applicable`
+- `pending`
+- `verified`
+- `invalid`
+- `failed`
+
+**Constraints and Data Integrity**
+
+- Webhook reference, provider name, integration type, direction, event type and status must be populated.
+- Direction, integration type and status must use approved values.
+- Processing attempts must be nonnegative.
+- Payload hash must use an approved integrity algorithm.
+- Encrypted payload and encryption key version must be consistent when payload retention is enabled.
+- Successfully processed incoming webhooks must have a verified signature whenever the provider supports signature verification.
+- Unverified or invalid events must not initiate sensitive business operations.
+- External event identifiers must be unique within the provider and integration scope where supplied.
+- Idempotency keys must prevent duplicate business processing.
+- Webhook processing timestamps must follow the event lifecycle.
+- Error descriptions must not expose secrets or sensitive customer information.
+
+**Indexes**
+
+Proposed indexes:
+
+- Unique index on `webhook_reference`.
+- Index on `(provider_name, external_event_id)`.
+- Index on `(provider_name, webhook_status, received_at DESC)`.
+- Index on `(firm_id, webhook_status, created_at DESC)`.
+- Index on `(integration_type, event_type, received_at DESC)`.
+- Index on `(webhook_direction, webhook_status, created_at DESC)`.
+- Index on `(next_retry_at, webhook_status)`.
+- Index on `(correlation_id)`.
+- Unique index on the approved provider-scoped idempotency key where applicable.
+
+**Business and Security Rules**
+
+- Incoming webhooks must be verified using the provider's documented authentication mechanism.
+- Signature verification must use the correct provider-specific signing method.
+- Timestamp validation and replay protection must be enforced where supported.
+- Provider credentials and signing secrets must be stored in an approved secrets-management service.
+- Secrets must never be stored in webhook payloads or error descriptions.
+- Unverified webhooks must not update payments, refunds, subscriptions or other business records.
+- Processing must be idempotent.
+- Duplicate callbacks must not create duplicate payments, refunds or subscription changes.
+- External payloads must be treated as untrusted input.
+- Payload size and content type must be validated.
+- Webhook processing must use controlled asynchronous jobs where appropriate.
+- Failed processing must follow retry and dead-letter policies.
+- Provider responses must not be treated as proof of a business outcome unless independently verified.
+- Outgoing webhook delivery must use authenticated HTTPS endpoints and controlled retry policies.
+- Webhook administrative actions and processing outcomes must be auditable.
+
+**Data Integrity and Lifecycle**
+
+- Incoming events must be persisted before asynchronous business processing.
+- Acknowledgement to the provider must follow the provider's delivery protocol.
+- Business state changes and event-processing outcomes must be coordinated transactionally.
+- Duplicate event delivery must remain safe.
+- Out-of-order events must be detected and handled according to the relevant business rules.
+- Original event receipt information must remain traceable.
+- Payload retention must be minimized and protected through encryption.
+- High-volume webhook records may require time-based partitioning.
+- All timestamps must use UTC.
+
+**Design Notes and Open Decisions**
+
+- The system must determine whether incoming and outgoing webhooks share one table or use separate event and delivery tables.
+- A separate `webhook_delivery_attempt` table may be required for complete retry history.
+- The system must define provider-specific signature verification and replay-protection rules.
+- The system must establish payload encryption, retention and deletion policies.
+- The system must define provider event ordering and deduplication behavior.
+- The system must decide how webhook events link to payment, refund and subscription business records.
+- The system must define retry, backoff and dead-letter policies.
+- The system must establish provider rate limits and endpoint security requirements.
+- The system must define monitoring and alerting for repeated webhook failures.
+
+### 3.90 `integration_configuration`
+
+**Purpose**
+
+The `integration_configuration` table stores configuration metadata for external services and integrations used by the ITR Management System.
+
+Examples include:
+
+- Payment gateway integrations.
+- Email delivery providers.
+- SMS providers.
+- Authorized third-party APIs.
+- Document verification services.
+- Other approved external services.
+
+**Ownership and Tenant Scope**
+
+- Ownership: System-Owned, with platform-wide or firm-specific scope.
+- Tenant scope: Platform-wide or firm-associated.
+- Tenant identifier: `firm_id`, nullable for platform-wide integrations.
+- Firm-specific configurations must be protected by tenant-aware RLS.
+- Platform-wide configurations require separate restricted access policies.
+- A firm must not be able to view or modify another firm's integration configuration.
+
+**Proposed Columns**
+
+| Column | Data Type | Nullable | Description |
+|---|---|---|---|
+| `id` | UUID | No | Primary key |
+| `firm_id` | UUID | Yes | Associated firm, if applicable |
+| `integration_code` | VARCHAR(100) | No | Unique integration identifier within its scope |
+| `integration_name` | VARCHAR(150) | No | Display name |
+| `integration_type` | VARCHAR(50) | No | Integration category |
+| `provider_name` | VARCHAR(100) | No | External service provider |
+| `environment` | VARCHAR(20) | No | Sandbox or production |
+| `configuration_data` | JSONB | No | Non-secret integration settings |
+| `credential_reference` | VARCHAR(255) | Yes | Reference to externally managed credentials |
+| `integration_status` | VARCHAR(30) | No | Current integration status |
+| `is_enabled` | BOOLEAN | No | Whether the integration is enabled |
+| `last_verified_at` | TIMESTAMPTZ | Yes | Last successful connection verification |
+| `verification_status` | VARCHAR(30) | No | Latest verification outcome |
+| `last_error_code` | VARCHAR(100) | Yes | Last structured verification error |
+| `last_error_summary` | TEXT | Yes | Sanitized error description |
+| `created_at` | TIMESTAMPTZ | No | Creation timestamp |
+| `updated_at` | TIMESTAMPTZ | No | Last update timestamp |
+| `created_by_membership_id` | UUID | Yes | Firm membership that created the configuration |
+| `updated_by_membership_id` | UUID | Yes | Firm membership that last updated it |
+
+**Primary Key and Foreign Keys**
+
+- Primary key: `id`.
+- `firm_id` references `firm.id`, when applicable.
+- `created_by_membership_id` and `updated_by_membership_id` reference `firm_membership.id` for firm-owned configurations.
+- Firm membership references must be validated against the same firm.
+- Platform-wide configurations must use an appropriate platform actor model rather than firm membership references.
+
+**Integration Types**
+
+- `payment_gateway`
+- `email`
+- `sms`
+- `external_api`
+- `document_verification`
+- `other`
+
+**Environments**
+
+- `sandbox`
+- `production`
+
+**Integration Statuses**
+
+- `draft`
+- `pending_verification`
+- `active`
+- `inactive`
+- `suspended`
+- `failed`
+- `revoked`
+
+**Verification Statuses**
+
+- `not_verified`
+- `pending`
+- `verified`
+- `failed`
+- `expired`
+
+**Constraints and Data Integrity**
+
+- Integration code, name, type, provider and environment must be populated.
+- Configuration data must be a valid JSON object.
+- Integration type, environment, status and verification status must use approved values.
+- Integration codes must be unique within their platform or firm scope.
+- A production integration must not be activated without the required verification.
+- An enabled integration must have an appropriate active status.
+- Firm-specific actor references must belong to the same firm.
+- Credential references must point to approved secrets-management records.
+- Configuration changes must be validated against provider-specific schemas.
+
+**Indexes**
+
+Proposed indexes:
+
+- Unique index on platform-wide `integration_code` where `firm_id IS NULL`.
+- Unique index on `(firm_id, integration_code)` where `firm_id IS NOT NULL`.
+- Index on `(firm_id, integration_type, integration_status)`.
+- Index on `(provider_name, environment)`.
+- Index on `(integration_status, is_enabled)`.
+- Index on `(verification_status, last_verified_at)`.
+
+**Business and Security Rules**
+
+- API keys, passwords, client secrets, signing keys and access tokens must never be stored directly in this table.
+- Credentials must be stored in an approved secrets-management service.
+- Only a protected credential reference may be stored in the database.
+- Credential references must not be exposed through ordinary API responses or logs.
+- Integration configuration access must require appropriate permissions.
+- Firm administrators may manage only integrations explicitly delegated to their firm.
+- Platform-wide integration configuration must remain under platform administration.
+- Production integrations must use HTTPS and provider-approved authentication.
+- Provider-specific credentials must be isolated by firm wherever the provider supports separate credentials.
+- Integration changes must generate audit records.
+- Credential rotation and revocation must be supported.
+- Failed verification must not silently activate an integration.
+
+**Data Integrity and Lifecycle**
+
+- Configuration changes must be validated before activation.
+- Verification results must record the time and outcome of the latest verification.
+- Disabling an integration must stop new operations without deleting historical event records.
+- Revoked credentials must no longer authorize new integration requests.
+- Historical changes may be retained in audit records or a dedicated configuration history table.
+- All timestamps must use UTC.
+
+**Design Notes and Open Decisions**
+
+- The exact secrets-management service and credential-reference format remain to be selected.
+- The system must define whether platform-wide integrations can be overridden by individual firms.
+- The system must establish provider-specific configuration schemas and validation rules.
+- The system must define the permitted firm administrator permissions for integration management.
+- A separate `integration_configuration_history` table may be required for versioned configuration snapshots.
+- The system must determine whether integration health checks run synchronously or through background jobs.
+- The system must define credential rotation, expiry and revocation workflows.
+- The system must determine whether one firm can maintain multiple configurations for the same provider and environment.
+
+### 3.91 `integration_delivery_log`
+
+**Purpose**
+
+The `integration_delivery_log` table stores operational records of requests and responses exchanged between the ITR Management System and external integration providers.
+
+It provides traceability for integration operations, delivery attempts, failures, retries and troubleshooting.
+
+Examples include:
+
+- Payment gateway API requests.
+- Email and SMS provider requests.
+- Refund processing requests.
+- External API requests.
+- Document verification requests.
+- Provider callback acknowledgements.
+- Other authorized integration operations.
+
+**Ownership and Tenant Scope**
+
+- Ownership: System-Owned, with an optional firm relationship.
+- Tenant scope: Platform-wide or firm-associated.
+- Tenant identifier: `firm_id`, nullable for platform-wide operations.
+- Firm-associated records must be protected by tenant-aware RLS.
+- Platform-wide records require separate restricted access policies.
+- Each record must be associated with the relevant integration configuration where applicable.
+
+**Proposed Columns**
+
+| Column | Data Type | Nullable | Description |
+|---|---|---|---|
+| `id` | UUID | No | Primary key |
+| `firm_id` | UUID | Yes | Associated firm, if applicable |
+| `integration_configuration_id` | UUID | Yes | Related integration configuration |
+| `delivery_reference` | VARCHAR(150) | No | Internal delivery reference |
+| `operation_type` | VARCHAR(100) | No | Integration operation |
+| `direction` | VARCHAR(20) | No | Outgoing or incoming |
+| `provider_name` | VARCHAR(100) | No | External service provider |
+| `endpoint_reference` | VARCHAR(255) | Yes | Sanitized endpoint identifier |
+| `http_method` | VARCHAR(10) | Yes | HTTP method, where applicable |
+| `request_reference` | VARCHAR(255) | Yes | Internal request or correlation reference |
+| `external_request_id` | VARCHAR(255) | Yes | Provider request identifier |
+| `delivery_status` | VARCHAR(30) | No | Delivery outcome |
+| `attempt_number` | INTEGER | No | Attempt sequence number |
+| `http_status_code` | INTEGER | Yes | HTTP response status |
+| `request_metadata` | JSONB | Yes | Sanitized request metadata |
+| `response_metadata` | JSONB | Yes | Sanitized response metadata |
+| `request_payload_hash` | VARCHAR(255) | Yes | Request integrity reference |
+| `response_payload_hash` | VARCHAR(255) | Yes | Response integrity reference |
+| `duration_ms` | BIGINT | Yes | Request duration in milliseconds |
+| `error_code` | VARCHAR(100) | Yes | Structured error code |
+| `error_summary` | TEXT | Yes | Sanitized error description |
+| `started_at` | TIMESTAMPTZ | No | Attempt start time |
+| `completed_at` | TIMESTAMPTZ | Yes | Attempt completion time |
+| `correlation_id` | UUID | Yes | Related business operation |
+| `created_at` | TIMESTAMPTZ | No | Record creation timestamp |
+
+**Primary Key and Foreign Keys**
+
+- Primary key: `id`.
+- `firm_id` references `firm.id`, when applicable.
+- `integration_configuration_id` references `integration_configuration.id`, when applicable.
+- Firm-associated integration configuration references must belong to the same firm.
+- Platform-wide integration records must follow separate platform access policies.
+
+**Delivery Directions**
+
+- `outgoing`
+- `incoming`
+
+**Delivery Statuses**
+
+- `pending`
+- `processing`
+- `succeeded`
+- `failed`
+- `retry_scheduled`
+- `timeout`
+- `rejected`
+- `cancelled`
+
+**Constraints and Data Integrity**
+
+- Delivery reference, operation type, direction, provider and status must be populated.
+- Attempt number must be greater than zero.
+- Duration, when supplied, must be nonnegative.
+- Request and response metadata must be valid JSON objects when present.
+- HTTP status codes must fall within the valid HTTP status-code range.
+- Completion time must not precede start time.
+- Firm and integration configuration references must satisfy tenant consistency.
+- Delivery attempts must have unique references within their defined scope.
+- Each retry must be distinguishable from previous attempts.
+- Failed attempts must retain a structured failure reason where available.
+
+**Indexes**
+
+Proposed indexes:
+
+- Unique index on `delivery_reference`.
+- Index on `(firm_id, created_at DESC)`.
+- Index on `(integration_configuration_id, created_at DESC)`.
+- Index on `(provider_name, delivery_status, created_at DESC)`.
+- Index on `(operation_type, delivery_status, created_at DESC)`.
+- Index on `(correlation_id)`.
+- Index on `(request_reference)`.
+- Index on `(external_request_id)` where supplied.
+
+**Business and Security Rules**
+
+- Request and response bodies must not be stored in unrestricted logs.
+- Passwords, access tokens, API keys, authorization headers, signing secrets and sensitive customer information must be redacted.
+- If payload evidence is necessary, it must be stored through a separately approved encrypted retention mechanism.
+- Integration logs must not become an alternative source of business truth.
+- Provider responses must be validated before updating business records.
+- Failed delivery must follow the applicable retry and backoff policy.
+- Duplicate requests must be prevented through idempotency controls where supported.
+- Integration delivery logs must be accessible only to authorized platform or firm personnel.
+- Access to sensitive integration diagnostics must be audited.
+- Logs must not expose another firm's integration activity.
+
+**Data Integrity and Lifecycle**
+
+- Each delivery attempt must have an independent record.
+- A retry must create a new attempt record rather than overwrite the previous attempt.
+- Delivery records should be immutable after completion, except for narrowly controlled operational annotations if required.
+- Integration delivery outcomes must be traceable through request and correlation references.
+- Long-running delivery operations must be monitored.
+- Old operational records must follow defined retention and archival policies.
+- High-volume records may require time-based partitioning.
+- All timestamps must use UTC.
+
+**Design Notes and Open Decisions**
+
+- The system must determine whether `integration_delivery_log` records one row per attempt or whether a separate delivery parent and attempt model is required.
+- The system must define the relationship between webhook events, background jobs and integration delivery attempts.
+- The system must establish request and response metadata retention limits.
+- The system must define provider-specific retry, timeout and idempotency policies.
+- The system must decide whether sanitized payload snapshots are necessary for selected integration types.
+- The system must establish log partitioning, archival and deletion policies.
+- The system must define monitoring and alerting for repeated failures and provider outages.
+
+### 3.92 `privileged_access_grant`
+
+**Purpose**
+
+The `privileged_access_grant` table records explicit, approved grants of temporary privileged access by authorized platform personnel to firm-specific resources.
+
+It supports controlled support operations, troubleshooting, security investigations and emergency access.
+
+A support case or approval request does not itself authorize access. An active grant must exist before the privileged operation is permitted.
+
+**Ownership and Tenant Scope**
+
+- Ownership: Platform-Owned, firm-associated.
+- Tenant scope: Firm-specific.
+- Tenant identifier: `firm_id`, mandatory.
+- Access administration: Authorized platform security and support roles.
+- Firm-associated records must follow a dedicated platform-controlled access policy.
+- Ordinary firm users must not be able to create, approve, extend or modify privileged access grants.
+
+**Proposed Columns**
+
+| Column | Data Type | Nullable | Description |
+|---|---|---|---|
+| `id` | UUID | No | Primary key |
+| `firm_id` | UUID | No | Firm whose resources may be accessed |
+| `support_case_id` | UUID | No | Related platform support case |
+| `platform_user_id` | UUID | No | Platform user receiving access |
+| `grant_reference` | UUID | No | Unique grant reference |
+| `access_type` | VARCHAR(50) | No | Type of privileged access |
+| `resource_scope` | JSONB | No | Explicitly permitted resource scope |
+| `permitted_actions` | JSONB | No | Explicitly permitted actions |
+| `purpose` | TEXT | No | Business justification |
+| `approval_status` | VARCHAR(30) | No | Approval outcome |
+| `approved_by_platform_user_id` | UUID | Yes | Approving platform user |
+| `approval_reason` | TEXT | Yes | Approval decision details |
+| `approved_at` | TIMESTAMPTZ | Yes | Approval timestamp |
+| `grant_status` | VARCHAR(30) | No | Current grant status |
+| `valid_from` | TIMESTAMPTZ | No | Grant start time |
+| `expires_at` | TIMESTAMPTZ | No | Mandatory expiry time |
+| `revoked_at` | TIMESTAMPTZ | Yes | Revocation timestamp |
+| `revoked_by_platform_user_id` | UUID | Yes | Platform user revoking access |
+| `revocation_reason` | TEXT | Yes | Revocation justification |
+| `created_at` | TIMESTAMPTZ | No | Creation timestamp |
+| `updated_at` | TIMESTAMPTZ | No | Last update timestamp |
+| `correlation_id` | UUID | Yes | Related operation reference |
+
+**Primary Key and Foreign Keys**
+
+- Primary key: `id`.
+- `firm_id` references `firm.id`.
+- `support_case_id` references `platform_support_case.id`.
+- `platform_user_id` references `platform_user.id`.
+- `approved_by_platform_user_id` references `platform_user.id`.
+- `revoked_by_platform_user_id` references `platform_user.id`.
+- The support case must belong to the same firm.
+- The grant recipient, approver and revoking actor must be valid platform users with the appropriate permissions.
+
+**Access Types**
+
+- `read_only`
+- `document_access`
+- `data_correction`
+- `configuration_access`
+- `diagnostic_access`
+- `emergency_access`
+- `other`
+
+**Approval Statuses**
+
+- `pending`
+- `approved`
+- `rejected`
+- `not_required`
+
+**Grant Statuses**
+
+- `pending`
+- `active`
+- `expired`
+- `revoked`
+- `rejected`
+- `cancelled`
+
+**Constraints and Data Integrity**
+
+- Firm, support case, recipient, access type, resource scope, purpose and expiry must be populated.
+- Resource scope and permitted actions must be valid JSON objects or arrays according to their defined schemas.
+- Expiry must be later than the grant start time.
+- An approved grant must have an approver and approval timestamp unless an explicitly approved emergency policy applies.
+- The grant recipient must not approve their own grant.
+- Revoked grants must contain revocation details.
+- A grant must not become active before approval.
+- Expired or revoked grants must not authorize further operations.
+- Access must be denied when the grant does not explicitly cover the requested resource and action.
+
+**Indexes**
+
+Proposed indexes:
+
+- Unique index on `grant_reference`.
+- Index on `(firm_id, grant_status, expires_at)`.
+- Index on `(platform_user_id, grant_status, expires_at)`.
+- Index on `(support_case_id)`.
+- Index on `(approved_by_platform_user_id, approved_at DESC)`.
+- Index on `(correlation_id)`.
+
+**Business and Security Rules**
+
+- Privileged access must follow least-privilege principles.
+- Access must be restricted to the specified firm, resource scope and permitted actions.
+- Every grant must have a mandatory expiry.
+- Access must be time-limited and automatically denied after expiry.
+- Approval must be independent of the requesting platform user.
+- Emergency access must follow a separately documented break-glass policy.
+- Emergency access must generate immediate security alerts and mandatory retrospective review.
+- Every privileged operation must be recorded in `privileged_access_event`.
+- The event's `access_grant_reference` must identify the grant authorizing that operation.
+- A grant must not bypass tenant isolation or database security controls.
+- Sensitive document and tax information access must require explicit scope and authorization.
+- Revocation must take effect promptly across active sessions and processing operations.
+- Grant creation, approval, rejection, extension and revocation must be auditable.
+- Privileged access must never be granted merely because a support case exists.
+
+**Data Integrity and Lifecycle**
+
+- Grant creation and approval must be recorded as controlled state transitions.
+- An active grant must be checked at the time of every privileged operation.
+- Grant expiry must be enforced even if a background expiry job is delayed.
+- Revocation must immediately prevent new privileged operations.
+- Historical grants and their associated audit evidence must be retained according to the security retention policy.
+- Grant records must not be physically deleted as part of routine revocation.
+- All timestamps must use UTC.
+
+**Design Notes and Open Decisions**
+
+- The system must define the exact resource-scope and permitted-action schemas.
+- The system must establish approval requirements for each access type.
+- The system must define maximum grant durations.
+- The system must specify emergency access and retrospective approval procedures.
+- The system must define how grants are checked by backend authorization and database access controls.
+- The system must determine how active operations are terminated after revocation.
+- The system must establish alerting and periodic review requirements.
+- The system must define whether grant extensions require fresh approval or a new grant.
+
+### 3.93 `background_job_attempt`
+
+**Purpose**
+
+The `background_job_attempt` table stores the individual execution attempts of background jobs.
+
+It provides a detailed operational history of job processing, including retries, failures, timeouts and successful completion.
+
+Examples include:
+
+- Excel import processing.
+- Document malware scanning.
+- Customer notifications.
+- ITR deadline reminders.
+- Refund status synchronization.
+- Report generation.
+- Subscription usage calculations.
+- Scheduled maintenance operations.
+
+**Ownership and Tenant Scope**
+
+- Ownership: System-Owned, with an optional firm relationship.
+- Tenant scope: Platform-wide or firm-associated.
+- Tenant identifier: `firm_id`, nullable for platform-wide jobs.
+- Firm-associated records must be protected by tenant-aware RLS.
+- Platform-wide records require separate restricted access policies.
+- Every attempt must belong to a valid background job execution.
+
+**Proposed Columns**
+
+| Column | Data Type | Nullable | Description |
+|---|---|---|---|
+| `id` | UUID | No | Primary key |
+| `firm_id` | UUID | Yes | Associated firm, if applicable |
+| `background_job_execution_id` | UUID | No | Parent background job execution |
+| `attempt_number` | INTEGER | No | Sequential attempt number |
+| `attempt_reference` | VARCHAR(150) | No | Unique attempt reference |
+| `worker_reference` | VARCHAR(150) | Yes | Worker processing the attempt |
+| `attempt_status` | VARCHAR(30) | No | Attempt outcome |
+| `started_at` | TIMESTAMPTZ | No | Attempt start time |
+| `completed_at` | TIMESTAMPTZ | Yes | Attempt completion time |
+| `duration_ms` | BIGINT | Yes | Execution duration in milliseconds |
+| `result_summary` | JSONB | Yes | Sanitized execution result |
+| `error_code` | VARCHAR(100) | Yes | Structured failure code |
+| `error_summary` | TEXT | Yes | Sanitized failure description |
+| `retryable` | BOOLEAN | No | Whether the failure permits retry |
+| `retry_scheduled_at` | TIMESTAMPTZ | Yes | Scheduled retry time |
+| `correlation_id` | UUID | Yes | Related business operation |
+| `created_at` | TIMESTAMPTZ | No | Record creation timestamp |
+
+**Primary Key and Foreign Keys**
+
+- Primary key: `id`.
+- `firm_id` references `firm.id`, when applicable.
+- `background_job_execution_id` references `background_job_execution.id`.
+- The parent job and attempt must have the same tenant scope.
+- The parent job must be the authoritative source for overall job status.
+
+**Attempt Statuses**
+
+- `queued`
+- `processing`
+- `completed`
+- `completed_with_warnings`
+- `failed`
+- `timeout`
+- `cancelled`
+- `retry_scheduled`
+
+**Constraints and Data Integrity**
+
+- Parent job, attempt number, attempt reference and status must be populated.
+- Attempt number must be greater than zero.
+- Attempt number must be unique within its parent job.
+- Attempt reference must be unique.
+- Duration must be nonnegative when supplied.
+- Completion time must not precede start time.
+- Result summary must be a valid JSON object when present.
+- A successful attempt must have a completion timestamp.
+- A failed attempt must contain a structured failure reason where available.
+- Retry scheduling must be consistent with the retryable flag.
+- Firm scope must match the parent background job.
+
+**Indexes**
+
+Proposed indexes:
+
+- Unique index on `attempt_reference`.
+- Unique index on `(background_job_execution_id, attempt_number)`.
+- Index on `(firm_id, created_at DESC)`.
+- Index on `(background_job_execution_id, attempt_status)`.
+- Index on `(attempt_status, started_at DESC)`.
+- Index on `(retryable, retry_scheduled_at)`.
+- Index on `(correlation_id)`.
+
+**Business and Security Rules**
+
+- Every execution attempt must create a separate record.
+- Previous attempts must never be overwritten by retries.
+- Attempt history must remain traceable to its parent job.
+- Tenant context must be established before processing firm-associated jobs.
+- A job must not access another firm's records.
+- Retry decisions must follow defined retry and backoff policies.
+- Non-retryable failures must not be automatically retried.
+- Repeated failures must be eligible for dead-letter handling and operational alerts.
+- Job payloads and result summaries must not expose credentials, tokens or unnecessary sensitive customer information.
+- Job execution must be idempotent where business operations could otherwise be duplicated.
+- Cancellation and timeout handling must not leave business records in inconsistent states.
+- Access to job diagnostics must be restricted and audited.
+
+**Data Integrity and Lifecycle**
+
+- Attempt creation and parent job status changes must be coordinated safely.
+- Each attempt must retain its original execution outcome.
+- Parent job status must reflect the authoritative execution lifecycle.
+- A successful attempt must not be invalidated by a later retry.
+- Attempts must remain available for operational troubleshooting and audit requirements.
+- High-volume attempt records may require time-based partitioning.
+- Retention and archival must follow the background job operational retention policy.
+- All timestamps must use UTC.
+
+**Design Notes and Open Decisions**
+
+- The system must define which failures are retryable for each job type.
+- The system must establish retry limits and exponential backoff policies.
+- The system must define how a timed-out worker is prevented from continuing to modify business records.
+- The system must establish dead-letter queue and manual replay procedures.
+- The system must determine whether worker heartbeat and lease information belong in this table or a separate execution-control mechanism.
+- The system must define the relationship between attempt records and operational monitoring.
+- The system must establish retention and partitioning policies.
+
+### 3.94 `scheduled_job_definition`
+
+**Purpose**
+
+The `scheduled_job_definition` table stores the configuration and lifecycle of scheduled jobs.
+
+It defines recurring, one-time and calendar-based jobs that the system must execute automatically.
+
+Examples include:
+
+- ITR filing deadline reminders.
+- Customer follow-up reminders.
+- Subscription renewal processing.
+- Subscription usage calculations.
+- Refund reconciliation.
+- Report generation.
+- Expired session cleanup.
+- Temporary file cleanup.
+- Document archival.
+- Security monitoring and maintenance.
+
+**Ownership and Tenant Scope**
+
+- Ownership: System-Owned, with an optional firm relationship.
+- Tenant scope: Platform-wide or firm-associated.
+- Tenant identifier: `firm_id`, nullable for platform-wide schedules.
+- Firm-associated definitions must be protected by tenant-aware RLS.
+- Platform-wide definitions require separate restricted access policies.
+- Firm administrators may manage only schedules explicitly delegated to their firm.
+- System-critical schedules must remain under platform control.
+
+**Proposed Columns**
+
+| Column | Data Type | Nullable | Description |
+|---|---|---|---|
+| `id` | UUID | No | Primary key |
+| `firm_id` | UUID | Yes | Associated firm, if applicable |
+| `schedule_reference` | VARCHAR(150) | No | Unique schedule reference |
+| `schedule_name` | VARCHAR(200) | No | Human-readable schedule name |
+| `job_type` | VARCHAR(100) | No | Type of scheduled job |
+| `schedule_type` | VARCHAR(30) | No | Scheduling method |
+| `schedule_expression` | VARCHAR(255) | Yes | Cron or equivalent expression |
+| `timezone` | VARCHAR(100) | No | IANA timezone identifier |
+| `schedule_configuration` | JSONB | No | Additional scheduling parameters |
+| `execution_configuration` | JSONB | No | Job execution parameters |
+| `schedule_status` | VARCHAR(30) | No | Current schedule status |
+| `is_enabled` | BOOLEAN | No | Whether the schedule is enabled |
+| `starts_at` | TIMESTAMPTZ | Yes | Schedule activation time |
+| `ends_at` | TIMESTAMPTZ | Yes | Optional schedule end time |
+| `next_run_at` | TIMESTAMPTZ | Yes | Next calculated execution time |
+| `last_run_at` | TIMESTAMPTZ | Yes | Most recent execution time |
+| `last_execution_id` | UUID | Yes | Most recent execution record |
+| `maximum_concurrent_executions` | INTEGER | No | Allowed concurrent executions |
+| `created_at` | TIMESTAMPTZ | No | Creation timestamp |
+| `updated_at` | TIMESTAMPTZ | No | Last update timestamp |
+| `created_by_membership_id` | UUID | Yes | Creating firm membership |
+| `updated_by_membership_id` | UUID | Yes | Updating firm membership |
+
+**Primary Key and Foreign Keys**
+
+- Primary key: `id`.
+- `firm_id` references `firm.id`, when applicable.
+- `last_execution_id` references `scheduled_job_execution.id`.
+- `created_by_membership_id` and `updated_by_membership_id` reference `firm_membership.id` for firm-managed schedules.
+- Firm-specific references must satisfy same-firm integrity.
+- Platform-managed schedules must use an appropriate platform actor model.
+
+**Schedule Types**
+
+- `one_time`
+- `recurring`
+- `cron_based`
+- `calendar_based`
+- `event_triggered`
+
+**Schedule Statuses**
+
+- `draft`
+- `active`
+- `paused`
+- `completed`
+- `disabled`
+- `cancelled`
+- `failed`
+
+**Constraints and Data Integrity**
+
+- Schedule reference, name, job type, schedule type, timezone and status must be populated.
+- Schedule reference must be unique.
+- Schedule and execution configuration fields must contain valid JSON objects.
+- Maximum concurrent executions must be greater than zero.
+- End time must be later than start time when both are provided.
+- Recurring and cron-based schedules must contain valid scheduling expressions.
+- One-time schedules must contain a valid execution time.
+- Timezone must be a valid IANA timezone identifier.
+- Next execution time must be calculated using the configured timezone and scheduling rules.
+- Firm-specific actor references must belong to the same firm.
+- Disabled or cancelled schedules must not generate new executions.
+
+**Indexes**
+
+Proposed indexes:
+
+- Unique index on `schedule_reference`.
+- Index on `(firm_id, schedule_status, is_enabled)`.
+- Index on `(schedule_type, schedule_status)`.
+- Index on `(next_run_at)` for enabled schedules.
+- Index on `(job_type, schedule_status)`.
+- Index on `(last_run_at DESC)`.
+- Index on `(last_execution_id)` where supplied.
+
+**Business and Security Rules**
+
+- Schedule definitions must be separate from individual scheduled executions.
+- Every scheduled occurrence must create or reference an individual `scheduled_job_execution` record.
+- Schedule changes must not overwrite historical execution records.
+- Only authorized users or system processes may create or modify schedules.
+- Firm schedules must never execute with another firm's tenant context.
+- Platform-wide schedules must run under restricted system permissions.
+- Scheduling expressions and execution configuration must be validated before activation.
+- Concurrent execution limits must be enforced.
+- Duplicate occurrences must be prevented using deterministic occurrence identifiers or idempotency keys.
+- Schedule changes, pauses, activation and cancellation must be auditable.
+- Execution failures must follow the relevant retry and monitoring policies.
+- Timezone and daylight-saving transitions must be handled explicitly.
+
+**Data Integrity and Lifecycle**
+
+- Schedule definition changes must be versioned or captured in audit history.
+- Each execution must preserve the schedule configuration version used at execution time.
+- The scheduler must safely identify due schedules and prevent multiple workers from claiming the same occurrence.
+- Missed executions must follow an explicit catch-up or skip policy.
+- Paused schedules must preserve their configuration.
+- Completed one-time schedules must not execute again.
+- All timestamps must use UTC, while the configured timezone controls calendar-based scheduling.
+
+**Design Notes and Open Decisions**
+
+- The system must define whether schedule configuration changes require a separate `scheduled_job_definition_version` table.
+- The system must establish the exact cron implementation and expression validation rules.
+- The system must define daylight-saving and timezone transition behavior.
+- The system must establish missed-run, catch-up and skip policies.
+- The system must define concurrency control and schedule-claiming mechanisms.
+- The system must determine which schedules firms can manage independently.
+- The system must define schedule versioning and audit requirements.
+- The system must establish how scheduled occurrences are linked to `scheduled_job_execution` and `background_job_execution` records.
